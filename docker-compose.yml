@@ -1,0 +1,42 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - type: bind
+        source: ./backend/app
+        target: /app/app
+      - type: bind
+        source: ./data
+        target: /app/data
+        bind:
+          create_host_path: true
+      - type: bind
+        source: ${IMAGE_ROOT:-./images}
+        target: /images
+        read_only: true
+        bind:
+          create_host_path: true
+    environment:
+      - DATA_DIR=/app/data
+      - IMAGE_ROOT=/images
+      - WATCHFILES_FORCE_POLLING=true
+
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+    environment:
+      - VITE_API_URL=http://localhost:8000
+      - CHOKIDAR_USEPOLLING=true
+    volumes:
+      - type: bind
+        source: ./frontend
+        target: /app
+      - type: volume
+        target: /app/node_modules
