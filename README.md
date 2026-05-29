@@ -22,13 +22,17 @@ When creating a project, enter an image directory relative to that mounted root,
 
 ## Data
 
-Project metadata and annotations are stored in `./data/projects.json`.
+Project index metadata is stored in `./data/projects/meta.json`.
+Each project's annotations are stored separately under `./data/projects/<project_name>.json`; duplicate names get a numeric suffix such as `<project_name>_2.json`.
+If an older `./data/projects.json` exists, the backend migrates it into the per-project format on startup.
+The home page can import a project from one of these project JSON files with the Import JSON button.
 
 CSV export includes image path, annotation status, and one column per project attribute.
 Attribute values are exported as `0` for False, `1` for True, and `2` for Unknown.
 Attributes named with `Group-Name` are displayed under a `Group` box in the annotator, using `Name` as the visible label. If a name contains multiple dashes, the last dash splits the group and label, so `UpperBody-Color-Black` appears as `Black` under `UpperBody-Color`.
 
 The annotation screen displays images at `height: 512px`. The Resize button only toggles the on-screen display between original-width-by-512-height and `256x512`; it does not modify image files.
+The Sampler button, or the `s` key, lets you draw a rectangle on the image, averages RGB inside that region, converts it to HSV, and maps it to the supported color labels with simple HSV rules. Sampler mode exits after one selection.
 
 ## Development
 

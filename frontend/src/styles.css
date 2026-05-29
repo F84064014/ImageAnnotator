@@ -47,6 +47,28 @@ button:disabled {
   margin-bottom: 20px;
 }
 
+.topbarActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.importProject {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.inlineError {
+  color: #8f2929;
+  font-size: 12px;
+  font-weight: 650;
+  max-width: 220px;
+}
+
 h1,
 h2,
 p {
@@ -91,6 +113,12 @@ p {
   color: #22302a;
   border-color: #d8ddd7;
   padding: 0 14px;
+}
+
+.secondary.activeTool {
+  background: #eaf6ef;
+  border-color: #1d6b4f;
+  color: #174d3a;
 }
 
 .iconButton {
@@ -281,8 +309,8 @@ textarea:focus {
   border: 1px solid #dfe4de;
   border-radius: 8px;
   padding: 16px;
-  display: grid;
-  grid-template-rows: auto 1fr auto;
+  display: flex;
+  flex-direction: column;
   gap: 18px;
   min-height: 0;
 }
@@ -309,6 +337,8 @@ textarea:focus {
   align-content: start;
   gap: 12px;
   overflow: auto;
+  flex: 1;
+  min-height: 0;
 }
 
 .attributeGroup {
@@ -356,6 +386,7 @@ textarea:focus {
 }
 
 .attributeColorSwatch {
+  display: block;
   width: 18px;
   height: 18px;
   border: 1px solid rgba(23, 32, 27, 0.22);
@@ -404,11 +435,26 @@ textarea:focus {
   overflow: hidden;
 }
 
+.imageSampleSurface {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+  max-width: 100%;
+  height: 512px;
+  user-select: none;
+}
+
+.imageSampleSurface.samplingEnabled {
+  cursor: crosshair;
+}
+
 .imageStage img {
+  display: block;
   width: auto;
   height: 512px;
   max-width: 100%;
   object-fit: contain;
+  pointer-events: none;
 }
 
 .imageStageResized img {
@@ -416,6 +462,81 @@ textarea:focus {
   height: 512px;
   max-width: 256px;
   object-fit: fill;
+}
+
+.imageStageResized .imageSampleSurface {
+  width: 256px;
+}
+
+.sampleBox {
+  position: absolute;
+  border: 2px solid #f8fafc;
+  background: rgba(29, 107, 79, 0.18);
+  box-shadow: 0 0 0 1px rgba(17, 24, 39, 0.72), 0 0 0 9999px rgba(17, 24, 39, 0.08);
+  pointer-events: none;
+}
+
+.sampleResult,
+.sampleFloatingResult {
+  border: 1px solid #dfe4de;
+  border-radius: 8px;
+  display: grid;
+  grid-template-columns: 24px auto 1fr;
+  align-items: center;
+  gap: 14px 10px;
+  padding: 10px 12px;
+  background: #f8faf7;
+}
+
+.sampleFloatingResult {
+  position: absolute;
+  z-index: 3;
+  min-width: 210px;
+  box-shadow: 0 12px 28px rgba(17, 24, 39, 0.24);
+  pointer-events: auto;
+}
+
+.sampleResult span:not(.sampleSwatch),
+.sampleFloatingResult span:not(.sampleSwatch) {
+  color: #66736c;
+  font-size: 12px;
+  font-weight: 650;
+  grid-column: 2/-1
+}
+
+.sampleError {
+  display: block;
+  color: #8f2929;
+  background: #fff3f3;
+  border-color: #e5bcbc;
+}
+
+.sampleSwatch {
+  width: 24px;
+  height: 24px;
+  border: 1px solid rgba(23, 32, 27, 0.24);
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.42);
+}
+
+.sampleClose {
+  position: absolute;
+  top: 4px;
+  right: 5px;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #66736c;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+}
+
+.sampleClose:hover {
+  background: rgba(17, 24, 39, 0.08);
+  color: #17201b;
 }
 
 @media (max-width: 820px) {

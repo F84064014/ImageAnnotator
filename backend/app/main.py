@@ -1,13 +1,15 @@
 import csv
 import io
+import json
 import os
+import re
 import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
@@ -15,7 +17,9 @@ from pydantic import BaseModel, Field
 
 DATA_DIR = Path(os.getenv("DATA_DIR", "/app/data"))
 IMAGE_ROOT = Path(os.getenv("IMAGE_ROOT", "/images")).resolve()
-PROJECTS_FILE = DATA_DIR / "projects.json"
+LEGACY_PROJECTS_FILE = DATA_DIR / "projects.json"
+PROJECTS_DIR = DATA_DIR / "projects"
+PROJECTS_META_FILE = PROJECTS_DIR / "meta.json"
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tif", ".tiff"}
 
 
@@ -43,26 +47,84 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def atomic_write_json(path: Path, data: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    shutil.move(tmp, path)
+
+
+def safe_project_stem(name: str) -> str:
+    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", name.strip()).strip("._-")
+    if not safe_name:
+        safe_name = "project"
+    return safe_name
+
+
+def unique_project_filename(name: str, taken: set[str]) -> str:
+    stem = safe_project_stem(name)
+    filename = f"{stem}.json"
+    index = 2
+    while filename in taken or (PROJECTS_DIR / filename).exists():
+        filename = f"{stem}_{index}.json"
+        index += 1
+    return filename
+
+
+def project_file_from_meta(meta_item: dict[str, Any]) -> Path:
+    filename = meta_item.get("file")
+    if not filename:
+        filename = f"{safe_project_stem(meta_item.get('name', 'project'))}.json"
+        meta_item["file"] = filename
+    return PROJECTS_DIR / filename
+
+
 def ensure_data_dir() -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    if not PROJECTS_FILE.exists():
-        PROJECTS_FILE.write_text("[]", encoding="utf-8")
+    PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
+    if not PROJECTS_META_FILE.exists():
+        if LEGACY_PROJECTS_FILE.exists():
+            migrate_legacy_projects()
+        else:
+            atomic_write_json(PROJECTS_META_FILE, [])
 
 
-def load_projects() -> list[dict[str, Any]]:
+def migrate_legacy_projects() -> None:
+    projects = json.loads(LEGACY_PROJECTS_FILE.read_text(encoding="utf-8"))
+    meta = []
+    taken: set[str] = set()
+    for project in projects:
+        filename = unique_project_filename(project["name"], taken)
+        taken.add(filename)
+        atomic_write_json(PROJECTS_DIR / filename, project)
+        summary = project_summary(project)
+        summary["file"] = filename
+        meta.append(summary)
+    atomic_write_json(PROJECTS_META_FILE, meta)
+
+
+def load_project_meta() -> list[dict[str, Any]]:
     ensure_data_dir()
-    import json
-
-    return json.loads(PROJECTS_FILE.read_text(encoding="utf-8"))
+    return json.loads(PROJECTS_META_FILE.read_text(encoding="utf-8"))
 
 
-def save_projects(projects: list[dict[str, Any]]) -> None:
+def save_project_meta(meta: list[dict[str, Any]]) -> None:
     ensure_data_dir()
-    import json
+    atomic_write_json(PROJECTS_META_FILE, meta)
 
-    tmp = PROJECTS_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(projects, indent=2, ensure_ascii=False), encoding="utf-8")
-    shutil.move(tmp, PROJECTS_FILE)
+
+def load_project(meta_item: dict[str, Any]) -> dict[str, Any]:
+    ensure_data_dir()
+    return json.loads(project_file_from_meta(meta_item).read_text(encoding="utf-8"))
+
+
+def save_project(project: dict[str, Any], meta: list[dict[str, Any]]) -> None:
+    meta_item = next((item for item in meta if item["id"] == project["id"]), None)
+    if meta_item is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    atomic_write_json(project_file_from_meta(meta_item), project)
+    meta_item.update(project_summary(project))
+    save_project_meta(meta)
 
 
 def resolve_image_directory(raw_directory: str) -> Path:
@@ -85,12 +147,12 @@ def resolve_image_directory(raw_directory: str) -> Path:
     return directory
 
 
-def find_project(project_id: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    projects = load_projects()
-    project = next((item for item in projects if item["id"] == project_id), None)
-    if project is None:
+def find_project(project_id: str) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
+    meta = load_project_meta()
+    meta_item = next((item for item in meta if item["id"] == project_id), None)
+    if meta_item is None:
         raise HTTPException(status_code=404, detail="Project not found")
-    return projects, project
+    return meta, meta_item, load_project(meta_item)
 
 
 def resolve_image_path(path: str) -> Path:
@@ -137,6 +199,67 @@ def validate_attribute_value(value: Any) -> int:
     raise HTTPException(status_code=400, detail="Attribute values must be 0, 1, or 2")
 
 
+def prepare_imported_project(raw_project: Any, meta: list[dict[str, Any]]) -> dict[str, Any]:
+    if not isinstance(raw_project, dict):
+        raise HTTPException(status_code=400, detail="Project JSON must be an object")
+
+    name = str(raw_project.get("name", "")).strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Project JSON is missing a valid name")
+
+    attributes = raw_project.get("attributes")
+    if not isinstance(attributes, list):
+        raise HTTPException(status_code=400, detail="Project JSON is missing attributes")
+    attributes = list(dict.fromkeys(str(attribute).strip() for attribute in attributes if str(attribute).strip()))
+    if not attributes:
+        raise HTTPException(status_code=400, detail="Project JSON must contain at least one attribute")
+
+    images = raw_project.get("images")
+    if not isinstance(images, list):
+        raise HTTPException(status_code=400, detail="Project JSON is missing images")
+
+    existing_ids = {item["id"] for item in meta}
+    project_id = str(raw_project.get("id") or uuid.uuid4())
+    if project_id in existing_ids:
+        project_id = str(uuid.uuid4())
+
+    imported_images = []
+    for raw_image in images:
+        if not isinstance(raw_image, dict):
+            continue
+        image_path = str(raw_image.get("path", "")).strip()
+        if not image_path:
+            continue
+        raw_attributes = raw_image.get("attributes", {})
+        if not isinstance(raw_attributes, dict):
+            raw_attributes = {}
+        imported_images.append(
+            {
+                "id": str(raw_image.get("id") or uuid.uuid4()),
+                "path": image_path,
+                "attributes": {
+                    attribute: normalize_attribute_value(raw_attributes.get(attribute, 2))
+                    for attribute in attributes
+                },
+                "annotated": bool(raw_image.get("annotated", False)),
+            }
+        )
+
+    if not imported_images:
+        raise HTTPException(status_code=400, detail="Project JSON does not contain valid images")
+
+    timestamp = now_iso()
+    return {
+        "id": project_id,
+        "name": name,
+        "attributes": attributes,
+        "image_directory": str(raw_project.get("image_directory", "")),
+        "images": imported_images,
+        "created_at": str(raw_project.get("created_at") or timestamp),
+        "updated_at": timestamp,
+    }
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -144,12 +267,12 @@ def health() -> dict[str, str]:
 
 @app.get("/projects")
 def list_projects() -> list[dict[str, Any]]:
-    return [project_summary(project) for project in load_projects()]
+    return [{key: value for key, value in project.items() if key != "file"} for project in load_project_meta()]
 
 
 @app.post("/projects", status_code=201)
 def create_project(payload: ProjectCreate) -> dict[str, Any]:
-    projects = load_projects()
+    meta = load_project_meta()
     name = payload.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="Project name is required")
@@ -168,8 +291,10 @@ def create_project(payload: ProjectCreate) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="No supported image files found")
 
     timestamp = now_iso()
+    project_id = str(uuid.uuid4())
+    filename = unique_project_filename(name, {item.get("file", "") for item in meta})
     project = {
-        "id": str(uuid.uuid4()),
+        "id": project_id,
         "name": name,
         "attributes": attributes,
         "image_directory": str(directory),
@@ -185,29 +310,54 @@ def create_project(payload: ProjectCreate) -> dict[str, Any]:
         "created_at": timestamp,
         "updated_at": timestamp,
     }
-    projects.append(project)
-    save_projects(projects)
+    atomic_write_json(PROJECTS_DIR / filename, project)
+    summary = project_summary(project)
+    meta.append({**summary, "file": filename})
+    save_project_meta(meta)
     return project_summary(project)
+
+
+@app.post("/projects/import", status_code=201)
+async def import_project(file: UploadFile = File(...)) -> dict[str, Any]:
+    if not file.filename.lower().endswith(".json"):
+        raise HTTPException(status_code=400, detail="Please upload a .json project file")
+
+    try:
+        raw_project = json.loads((await file.read()).decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid JSON file") from exc
+
+    meta = load_project_meta()
+    project = prepare_imported_project(raw_project, meta)
+    filename = unique_project_filename(project["name"], {item.get("file", "") for item in meta})
+    atomic_write_json(PROJECTS_DIR / filename, project)
+    summary = project_summary(project)
+    meta.append({**summary, "file": filename})
+    save_project_meta(meta)
+    return summary
 
 
 @app.delete("/projects/{project_id}", status_code=204)
 def delete_project(project_id: str) -> None:
-    projects = load_projects()
-    next_projects = [project for project in projects if project["id"] != project_id]
-    if len(next_projects) == len(projects):
+    meta = load_project_meta()
+    meta_item = next((item for item in meta if item["id"] == project_id), None)
+    if meta_item is None:
         raise HTTPException(status_code=404, detail="Project not found")
-    save_projects(next_projects)
+    project_file = project_file_from_meta(meta_item)
+    if project_file.exists():
+        project_file.unlink()
+    save_project_meta([project for project in meta if project["id"] != project_id])
 
 
 @app.get("/projects/{project_id}")
 def get_project(project_id: str) -> dict[str, Any]:
-    _, project = find_project(project_id)
+    _, _, project = find_project(project_id)
     return project
 
 
 @app.put("/projects/{project_id}/images/{image_id}/annotation")
 def update_annotation(project_id: str, image_id: str, payload: AnnotationUpdate) -> dict[str, Any]:
-    projects, project = find_project(project_id)
+    meta, _, project = find_project(project_id)
     image = next((item for item in project["images"] if item["id"] == image_id), None)
     if image is None:
         raise HTTPException(status_code=404, detail="Image not found")
@@ -217,13 +367,13 @@ def update_annotation(project_id: str, image_id: str, payload: AnnotationUpdate)
         image["attributes"][attribute] = validate_attribute_value(payload.attributes.get(attribute, 2))
     image["annotated"] = True
     project["updated_at"] = now_iso()
-    save_projects(projects)
+    save_project(project, meta)
     return image
 
 
 @app.get("/projects/{project_id}/export")
 def export_project(project_id: str) -> StreamingResponse:
-    _, project = find_project(project_id)
+    _, _, project = find_project(project_id)
     buffer = io.StringIO()
     writer = csv.writer(buffer)
     writer.writerow(["image_path", "annotated", *project["attributes"]])

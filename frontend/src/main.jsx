@@ -1,13 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowLeft, ChevronLeft, ChevronRight, Download, FolderOpen, Minimize2, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, Download, FileUp, FolderOpen, Minimize2, Pipette, Plus, Trash2 } from 'lucide-react';
 import './styles.css';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const ATTRIBUTE_STATES = {
-  0: { label: 'False', next: 2 },
-  1: { label: 'True', next: 0 },
-  2: { label: 'Unknown', next: 1 },
+  0: { label: 'False', next: 1 },
+  1: { label: 'True', next: 2 },
+  2: { label: 'Unknown', next: 0 },
 };
 const ATTRIBUTE_COLORS = {
   black: '#111827',
@@ -22,10 +22,12 @@ const ATTRIBUTE_COLORS = {
   white: '#ffffff',
   yellow: '#eab308',
 };
-
 async function api(path, options = {}) {
+  const headers = options.body instanceof FormData
+    ? options.headers || {}
+    : { 'Content-Type': 'application/json', ...(options.headers || {}) };
   const response = await fetch(`${API_URL}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    headers,
     ...options,
   });
   if (!response.ok) {
@@ -70,7 +72,10 @@ function App() {
             <h1>Image Annotator</h1>
             <p>{projects.length} projects</p>
           </div>
-          <CreateProject onCreated={loadProjects} />
+          <div className="topbarActions">
+            <ImportProject onImported={loadProjects} />
+            <CreateProject onCreated={loadProjects} />
+          </div>
         </div>
 
         {error && <div className="alert">{error}</div>}
@@ -99,6 +104,50 @@ function App() {
         )}
       </section>
     </main>
+  );
+}
+
+function ImportProject({ onImported }) {
+  const fileInputRef = useRef(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  async function importFile(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setBusy(true);
+    setError('');
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      await api('/projects/import', {
+        method: 'POST',
+        body: formData,
+      });
+      await onImported();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+      event.target.value = '';
+    }
+  }
+
+  return (
+    <div className="importProject">
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="application/json,.json"
+        onChange={importFile}
+        hidden
+      />
+      <button className="secondary" onClick={() => fileInputRef.current?.click()} disabled={busy}>
+        <FileUp size={18} />{busy ? 'Importing...' : 'Import JSON'}
+      </button>
+      {error && <span className="inlineError">{error}</span>}
+    </div>
   );
 }
 
@@ -227,10 +276,12 @@ function TriStateAttribute({ label, value, onChange }) {
     <label
       className={`attributeRow attributeState${normalizedValue} ${color ? 'attributeColorRow' : ''}`}
       style={rowStyle}
+      onMouseDown={(event) => event.preventDefault()}
     >
       <input
         ref={checkboxRef}
         type="checkbox"
+        tabIndex={-1}
         checked={normalizedValue === 1}
         readOnly
         onClick={cycleState}
@@ -242,11 +293,65 @@ function TriStateAttribute({ label, value, onChange }) {
   );
 }
 
+function rgbToHsv(red, green, blue) {
+  const r = red / 255;
+  const g = green / 255;
+  const b = blue / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const delta = max - min;
+  let hue = 0;
+
+  if (delta !== 0) {
+    if (max === r) hue = 60 * (((g - b) / delta) % 6);
+    if (max === g) hue = 60 * ((b - r) / delta + 2);
+    if (max === b) hue = 60 * ((r - g) / delta + 4);
+  }
+  if (hue < 0) hue += 360;
+
+  return {
+    h: hue,
+    s: max === 0 ? 0 : (delta / max) * 100,
+    v: max * 100,
+  };
+}
+
+function classifyColor({ h, s, v }) {
+  if (v < 18) return 'Black';
+  if (s < 12 && v > 84) return 'White';
+  if (s < 18) return 'Grey';
+  if ((h >= 0 && h < 14) || h >= 345) return 'Red';
+  if (h >= 14 && h < 42 && v < 62) return 'Brown';
+  if (h >= 14 && h < 42) return 'Orange';
+  if (h >= 42 && h < 72) return 'Yellow';
+  if (h >= 72 && h < 170) return 'Green';
+  if (h >= 170 && h < 255) return 'Blue';
+  if (h >= 255 && h < 292) return 'Purple';
+  if (h >= 292 && h < 345) return 'Pink';
+  return 'Grey';
+}
+
+function getSampleBox(start, end) {
+  const deltaX = end.x - start.x;
+  const deltaY = end.y - start.y;
+  return {
+    x: Math.min(start.x, end.x),
+    y: Math.min(start.y, end.y),
+    width: Math.max(1, Math.abs(deltaX)),
+    height: Math.max(1, Math.abs(deltaY)),
+  };
+}
+
 function Annotator({ projectId, onBack }) {
   const [project, setProject] = useState(null);
   const [index, setIndex] = useState(0);
   const [error, setError] = useState('');
   const [displayResized, setDisplayResized] = useState(false);
+  const [samplerActive, setSamplerActive] = useState(false);
+  const [sampleBox, setSampleBox] = useState(null);
+  const [sampleResult, setSampleResult] = useState(null);
+  const dragStartRef = useRef(null);
+  const imageRef = useRef(null);
 
   async function loadProject() {
     setError('');
@@ -266,10 +371,14 @@ function Annotator({ projectId, onBack }) {
   const attributeGroups = useMemo(() => groupAttributes(project?.attributes || []), [project]);
 
   function goNext() {
+    setSampleBox(null);
+    setSampleResult(null);
     setIndex((current) => Math.min(current + 1, (project?.images.length || 1) - 1));
   }
 
   function goPrev() {
+    setSampleBox(null);
+    setSampleResult(null);
     setIndex((current) => Math.max(current - 1, 0));
   }
 
@@ -288,13 +397,110 @@ function Annotator({ projectId, onBack }) {
 
   useEffect(() => {
     function onKeyDown(event) {
-      if (event.target.matches('input, textarea, button')) return;
+      if (event.target.matches('textarea, select, [contenteditable="true"]')) return;
+      if (event.target.matches('input') && event.target.type !== 'checkbox') return;
       if (event.key.toLowerCase() === 'f') goNext();
       if (event.key.toLowerCase() === 'd') goPrev();
+      if (event.key.toLowerCase() === 's') setSamplerActive((current) => !current);
     }
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [project]);
+
+  function getImagePoint(event) {
+    const imageElement = imageRef.current;
+    if (!imageElement) return null;
+    const rect = imageElement.getBoundingClientRect();
+    const x = Math.min(Math.max(event.clientX - rect.left, 0), rect.width);
+    const y = Math.min(Math.max(event.clientY - rect.top, 0), rect.height);
+    return { x, y, rect };
+  }
+
+  function startSampling(event) {
+    if (!samplerActive) return;
+    const point = getImagePoint(event);
+    if (!point) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragStartRef.current = point;
+    setSampleResult(null);
+    setSampleBox({ x: point.x, y: point.y, width: 1, height: 1 });
+  }
+
+  function updateSampling(event) {
+    if (!samplerActive || !dragStartRef.current) return;
+    const point = getImagePoint(event);
+    if (!point) return;
+    event.preventDefault();
+    setSampleBox(getSampleBox(dragStartRef.current, point));
+  }
+
+  function finishSampling(event) {
+    if (!samplerActive || !dragStartRef.current) return;
+    const point = getImagePoint(event);
+    const start = dragStartRef.current;
+    dragStartRef.current = null;
+    if (!point || !imageRef.current) return;
+    event.preventDefault();
+
+    const box = getSampleBox(start, point);
+    const imageElement = imageRef.current;
+    if (!imageElement.complete || imageElement.naturalWidth === 0 || imageElement.naturalHeight === 0) {
+      setSampleResult({ error: 'Image is not ready for color sampling yet' });
+      return;
+    }
+    const scaleX = imageElement.naturalWidth / point.rect.width;
+    const scaleY = imageElement.naturalHeight / point.rect.height;
+    const sourceX = Math.round(box.x * scaleX);
+    const sourceY = Math.round(box.y * scaleY);
+    const sourceWidth = Math.max(1, Math.round(box.width * scaleX));
+    const sourceHeight = Math.max(1, Math.round(box.height * scaleY));
+
+    let pixels;
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = sourceWidth;
+      canvas.height = sourceHeight;
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      context.drawImage(
+        imageElement,
+        sourceX,
+        sourceY,
+        sourceWidth,
+        sourceHeight,
+        0,
+        0,
+        sourceWidth,
+        sourceHeight,
+      );
+      pixels = context.getImageData(0, 0, sourceWidth, sourceHeight).data;
+    } catch (err) {
+      setSampleResult({ error: 'Unable to sample this image. Please refresh after the image finishes loading.' });
+      return;
+    }
+
+    let red = 0;
+    let green = 0;
+    let blue = 0;
+    let count = 0;
+    for (let offset = 0; offset < pixels.length; offset += 4) {
+      red += pixels[offset];
+      green += pixels[offset + 1];
+      blue += pixels[offset + 2];
+      count += 1;
+    }
+
+    const rgb = {
+      r: Math.round(red / count),
+      g: Math.round(green / count),
+      b: Math.round(blue / count),
+    };
+    const hsv = rgbToHsv(rgb.r, rgb.g, rgb.b);
+    const color = classifyColor(hsv);
+    setSampleBox(box);
+    setSampleResult({ rgb, hsv, color });
+    setSamplerActive(false);
+  }
 
   if (error) return <main className="page"><div className="alert">{error}</div></main>;
   if (!project || !image) return <main className="page"><div className="empty">Loading project...</div></main>;
@@ -335,17 +541,77 @@ function Annotator({ projectId, onBack }) {
           </div>
           <div className="navButtons">
             <button className="secondary" onClick={goPrev} disabled={index === 0}><ChevronLeft size={18} />Prev</button>
+            <button
+              className={`secondary ${samplerActive ? 'activeTool' : ''}`}
+              onClick={() => setSamplerActive((current) => !current)}
+            >
+              <Pipette size={18} />Sampler
+            </button>
             <button className="secondary" onClick={() => setDisplayResized((current) => !current)}>
               <Minimize2 size={18} />{displayResized ? 'Original' : 'Resize'}
             </button>
             <button className="secondary" onClick={goNext} disabled={index === project.images.length - 1}>Next<ChevronRight size={18} /></button>
           </div>
+          {sampleResult?.error && <div className="sampleResult sampleError">{sampleResult.error}</div>}
         </aside>
         <div className={`imageStage ${displayResized ? 'imageStageResized' : ''}`}>
-          <img
-            src={`${API_URL}/image?path=${encodeURIComponent(image.path)}`}
-            alt={image.path}
-          />
+          <div
+            className={`imageSampleSurface ${samplerActive ? 'samplingEnabled' : ''}`}
+            onPointerDown={startSampling}
+            onPointerMove={updateSampling}
+            onPointerUp={finishSampling}
+            onPointerCancel={() => { dragStartRef.current = null; }}
+          >
+            <img
+              ref={imageRef}
+              src={`${API_URL}/image?path=${encodeURIComponent(image.path)}`}
+              alt={image.path}
+              crossOrigin="anonymous"
+              draggable="false"
+            />
+            {sampleBox && (
+              <div
+                className="sampleBox"
+                style={{
+                  left: `${sampleBox.x}px`,
+                  top: `${sampleBox.y}px`,
+                  width: `${sampleBox.width}px`,
+                  height: `${sampleBox.height}px`,
+                }}
+              />
+            )}
+            {sampleBox && sampleResult && !sampleResult.error && (
+              <div
+                className="sampleFloatingResult"
+                style={{
+                  left: `${sampleBox.x + sampleBox.width}px`,
+                  top: `${sampleBox.y}px`,
+                  transform: sampleBox.x + sampleBox.width + 230 > imageRef.current?.clientWidth
+                    ? 'translate(calc(-100% - 8px), -8px)'
+                    : 'translate(8px, -8px)',
+                }}
+              >
+                <span
+                  className="sampleSwatch"
+                  style={{ background: `rgb(${sampleResult.rgb.r}, ${sampleResult.rgb.g}, ${sampleResult.rgb.b})` }}
+                />
+                <strong>{sampleResult.color}</strong>
+                <span>RGB {sampleResult.rgb.r}, {sampleResult.rgb.g}, {sampleResult.rgb.b}</span>
+                <span>HSV {Math.round(sampleResult.hsv.h)}, {Math.round(sampleResult.hsv.s)}, {Math.round(sampleResult.hsv.v)}</span>
+                <button
+                  className="sampleClose"
+                  title="Remove sample"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setSampleBox(null);
+                    setSampleResult(null);
+                  }}
+                >
+                  x
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </section>
     </main>
