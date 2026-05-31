@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowLeft, ChevronLeft, ChevronRight, Download, FileUp, Filter, FolderOpen, Minimize2, Pipette, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { ArrowLeft, BarChart3, ChevronLeft, ChevronRight, Download, FileUp, Filter, FolderOpen, Minimize2, Pipette, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import './styles.css';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -245,6 +245,30 @@ function hasSelectedAttribute(image, attributes) {
   return attributes.some((attribute) => normalizeAttributeValue(image.attributes?.[attribute]) !== 0);
 }
 
+function getAttributeStats(images, attributes) {
+  const annotatedImages = images.filter((image) => image.annotated);
+  return attributes.map((attribute) => {
+    const counts = annotatedImages.reduce((accumulator, image) => {
+      const value = normalizeAttributeValue(image.attributes?.[attribute]);
+      if (value === 1) accumulator.true += 1;
+      if (value === 2) accumulator.unknown += 1;
+      if (value === 0) accumulator.false += 1;
+      return accumulator;
+    }, { true: 0, unknown: 0, false: 0 });
+    const total = annotatedImages.length;
+    return {
+      attribute,
+      total,
+      counts,
+      percentages: {
+        true: total ? (counts.true / total) * 100 : 0,
+        unknown: total ? (counts.unknown / total) * 100 : 0,
+        false: total ? (counts.false / total) * 100 : 0,
+      },
+    };
+  });
+}
+
 function groupAttributes(attributes) {
   const groups = [];
   const groupMap = new Map();
@@ -363,6 +387,7 @@ function Annotator({ projectId, onBack }) {
   const [sampleBox, setSampleBox] = useState(null);
   const [sampleResult, setSampleResult] = useState(null);
   const [scanBusy, setScanBusy] = useState(false);
+  const [statsOpen, setStatsOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [filters, setFilters] = useState({ annotated: 'all', attributes: {} });
   const dragStartRef = useRef(null);
@@ -388,6 +413,7 @@ function Annotator({ projectId, onBack }) {
   const image = filteredImages[index];
   const annotatedCount = useMemo(() => project?.images.filter((item) => item.annotated).length || 0, [project]);
   const attributeGroups = useMemo(() => groupAttributes(project?.attributes || []), [project]);
+  const attributeStats = useMemo(() => getAttributeStats(project?.images || [], project?.attributes || []), [project]);
   const activeFilterCount = useMemo(() => (
     (filters.annotated === 'all' ? 0 : 1)
     + Object.values(filters.attributes).filter((value) => value !== 'all').length
@@ -622,8 +648,66 @@ function Annotator({ projectId, onBack }) {
           </p>
         </div>
         <div className="annotatorActions">
+          <div className="statsMenu">
+            <button
+              className={`secondary ${statsOpen ? 'activeTool' : ''}`}
+              onClick={() => {
+                setStatsOpen((current) => !current);
+                setFiltersOpen(false);
+              }}
+            >
+              <BarChart3 size={18} />Stats
+            </button>
+            {statsOpen && (
+              <div className="statsPanel">
+                <div className="statsPanelHeader">
+                  <strong>Annotated Data</strong>
+                  <span>{annotatedCount} images</span>
+                </div>
+                {annotatedCount === 0 ? (
+                  <div className="empty statsEmpty">No annotated images yet</div>
+                ) : (
+                  <div className="statsList">
+                    {attributeStats.map((item) => (
+                      <div className="statsRow" key={item.attribute}>
+                        <div className="statsRowHeader">
+                          <strong>{item.attribute}</strong>
+                          <span>
+                            T {item.counts.true} / U {item.counts.unknown} / F {item.counts.false}
+                          </span>
+                        </div>
+                        <div className="statsBar" aria-label={`${item.attribute} proportions`}>
+                          <span
+                            className="statsBarTrue"
+                            style={{ width: `${item.percentages.true}%` }}
+                            title={`True ${Math.round(item.percentages.true)}%`}
+                          />
+                          <span
+                            className="statsBarUnknown"
+                            style={{ width: `${item.percentages.unknown}%` }}
+                            title={`Unknown ${Math.round(item.percentages.unknown)}%`}
+                          />
+                          <span
+                            className="statsBarFalse"
+                            style={{ width: `${item.percentages.false}%` }}
+                            title={`False ${Math.round(item.percentages.false)}%`}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
           <div className="filterMenu">
-            <button className={`secondary ${filtersOpen ? 'activeTool' : ''}`} onClick={() => setFiltersOpen((current) => !current)}>
+            <button
+              className={`secondary ${filtersOpen ? 'activeTool' : ''}`}
+              onClick={() => {
+                setFiltersOpen((current) => !current);
+                setStatsOpen(false);
+              }}
+            >
               <Filter size={18} />Filters{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
             </button>
             {filtersOpen && (
