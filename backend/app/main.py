@@ -169,6 +169,14 @@ def resolve_image_path(path: str) -> Path:
     return image_path
 
 
+def scan_image_paths(directory: Path) -> list[str]:
+    return sorted(
+        str(path)
+        for path in directory.rglob("*")
+        if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS
+    )
+
+
 def project_summary(project: dict[str, Any]) -> dict[str, Any]:
     annotated = sum(1 for image in project["images"] if image.get("annotated"))
     return {
@@ -197,6 +205,11 @@ def validate_attribute_value(value: Any) -> int:
     if value in {0, 1, 2}:
         return int(value)
     raise HTTPException(status_code=400, detail="Attribute values must be 0, 1, or 2")
+
+
+def has_selected_attribute(image: dict[str, Any], attributes: list[str]) -> bool:
+    image_attributes = image.get("attributes", {})
+    return any(normalize_attribute_value(image_attributes.get(attribute, 0)) != 0 for attribute in attributes)
 
 
 def prepare_imported_project(raw_project: Any, meta: list[dict[str, Any]]) -> dict[str, Any]:
@@ -282,11 +295,7 @@ def create_project(payload: ProjectCreate) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="At least one attribute is required")
 
     directory = resolve_image_directory(payload.image_directory)
-    image_paths = sorted(
-        str(path)
-        for path in directory.rglob("*")
-        if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS
-    )
+    image_paths = scan_image_paths(directory)
     if not image_paths:
         raise HTTPException(status_code=400, detail="No supported image files found")
 
@@ -355,6 +364,32 @@ def get_project(project_id: str) -> dict[str, Any]:
     return project
 
 
+@app.post("/projects/{project_id}/scan")
+def scan_project_images(project_id: str) -> dict[str, Any]:
+    meta, _, project = find_project(project_id)
+    directory = resolve_image_directory(project["image_directory"])
+    image_paths = scan_image_paths(directory)
+    if not image_paths:
+        raise HTTPException(status_code=400, detail="No supported image files found")
+
+    existing_by_path = {image["path"]: image for image in project["images"]}
+    project["images"] = [
+        existing_by_path.get(
+            image_path,
+            {
+                "id": str(uuid.uuid4()),
+                "path": image_path,
+                "attributes": {attribute: 0 for attribute in project["attributes"]},
+                "annotated": False,
+            },
+        )
+        for image_path in image_paths
+    ]
+    project["updated_at"] = now_iso()
+    save_project(project, meta)
+    return project
+
+
 @app.put("/projects/{project_id}/images/{image_id}/annotation")
 def update_annotation(project_id: str, image_id: str, payload: AnnotationUpdate) -> dict[str, Any]:
     meta, _, project = find_project(project_id)
@@ -365,9 +400,22 @@ def update_annotation(project_id: str, image_id: str, payload: AnnotationUpdate)
     image["attributes"] = {}
     for attribute in project["attributes"]:
         image["attributes"][attribute] = validate_attribute_value(payload.attributes.get(attribute, 2))
-    image["annotated"] = True
     project["updated_at"] = now_iso()
     save_project(project, meta)
+    return image
+
+
+@app.put("/projects/{project_id}/images/{image_id}/annotated")
+def mark_image_annotated(project_id: str, image_id: str) -> dict[str, Any]:
+    meta, _, project = find_project(project_id)
+    image = next((item for item in project["images"] if item["id"] == image_id), None)
+    if image is None:
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    if has_selected_attribute(image, project["attributes"]):
+        image["annotated"] = True
+        project["updated_at"] = now_iso()
+        save_project(project, meta)
     return image
 
 

@@ -15,6 +15,7 @@ body {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -245,6 +246,7 @@ label {
 }
 
 input,
+select,
 textarea {
   border: 1px solid #ccd4ce;
   border-radius: 7px;
@@ -261,6 +263,7 @@ textarea {
 }
 
 input:focus,
+select:focus,
 textarea:focus {
   border-color: #1d6b4f;
   box-shadow: 0 0 0 3px rgba(29, 107, 79, 0.14);
@@ -283,6 +286,66 @@ textarea:focus {
 
 .annotatorHeader {
   margin-bottom: 14px;
+}
+
+.annotatorActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.filterMenu {
+  position: relative;
+}
+
+.filterPanel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 5;
+  width: min(420px, calc(100vw - 28px));
+  max-height: min(640px, calc(100vh - 110px));
+  overflow: auto;
+  border: 1px solid #d8ddd7;
+  border-radius: 8px;
+  background: white;
+  box-shadow: 0 16px 48px rgba(17, 31, 24, 0.18);
+  padding: 14px;
+  display: grid;
+  gap: 14px;
+}
+
+.filterPanelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.textButton {
+  border: 0;
+  background: transparent;
+  color: #1d6b4f;
+  font-weight: 750;
+  padding: 4px 0;
+}
+
+.filterAttributeList {
+  display: grid;
+  gap: 10px;
+}
+
+.filterAttributeList label {
+  grid-template-columns: minmax(0, 1fr) 128px;
+  align-items: center;
+  gap: 10px;
+}
+
+.filterEmpty {
+  min-height: 180px;
+  padding: 18px;
 }
 
 .titleBlock {
@@ -319,12 +382,48 @@ textarea:focus {
   min-width: 0;
 }
 
+.imageNameRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
 .imageMeta strong,
-.imageMeta span {
+.imagePath {
   display: block;
 }
 
-.imageMeta span {
+.imageNameRow strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.annotationBadge {
+  flex: 0 0 auto;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.annotationBadgeAnnotated {
+  color: #145437;
+  background: #dff5e8;
+  border: 1px solid #8ac8a5;
+}
+
+.annotationBadgePending {
+  color: #8a2323;
+  background: #ffe4e4;
+  border: 1px solid #e7a1a1;
+}
+
+.imagePath {
   color: #66736c;
   font-size: 13px;
   line-height: 1.45;
@@ -548,6 +647,24 @@ textarea:focus {
   .topbar,
   .annotatorHeader {
     align-items: flex-start;
+  }
+
+  .annotatorHeader {
+    flex-wrap: wrap;
+  }
+
+  .annotatorActions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .filterPanel {
+    left: 0;
+    right: auto;
+  }
+
+  .filterAttributeList label {
+    grid-template-columns: 1fr;
   }
 
   h1 {
