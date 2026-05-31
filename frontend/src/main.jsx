@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowLeft, BarChart3, ChevronLeft, ChevronRight, Download, FileUp, Filter, FolderOpen, Minimize2, Pipette, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { ArrowLeft, BarChart3, ChevronLeft, ChevronRight, Cpu, Download, FileUp, Filter, FolderOpen, Minimize2, Pipette, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import './styles.css';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -233,9 +233,14 @@ function normalizeAttributeValue(value) {
   return [0, 1, 2].includes(value) ? value : 2;
 }
 
+function getAnnotationStatus(image) {
+  if (!image.annotated) return 'notAnnotated';
+  if (['model', 'model_modified'].includes(image.annotation_source)) return 'modelAnnotated';
+  return 'annotated';
+}
+
 function imageMatchesFilters(image, filters) {
-  if (filters.annotated === 'annotated' && !image.annotated) return false;
-  if (filters.annotated === 'notAnnotated' && image.annotated) return false;
+  if (filters.annotated !== 'all' && getAnnotationStatus(image) !== filters.annotated) return false;
   return Object.entries(filters.attributes).every(([attribute, value]) => (
     value === 'all' || normalizeAttributeValue(image.attributes?.[attribute]) === Number(value)
   ));
@@ -243,6 +248,16 @@ function imageMatchesFilters(image, filters) {
 
 function hasSelectedAttribute(image, attributes) {
   return attributes.some((attribute) => normalizeAttributeValue(image.attributes?.[attribute]) !== 0);
+}
+
+function getAnnotationBadge(image) {
+  if (getAnnotationStatus(image) === 'modelAnnotated') {
+    return { label: 'Model annotated', className: 'annotationBadgeModel' };
+  }
+  if (getAnnotationStatus(image) === 'annotated') {
+    return { label: 'Annotated', className: 'annotationBadgeAnnotated' };
+  }
+  return { label: 'Not annotated', className: 'annotationBadgePending' };
 }
 
 function getAttributeStats(images, attributes) {
@@ -387,11 +402,17 @@ function Annotator({ projectId, onBack }) {
   const [sampleBox, setSampleBox] = useState(null);
   const [sampleResult, setSampleResult] = useState(null);
   const [scanBusy, setScanBusy] = useState(false);
+  const [modelStatus, setModelStatus] = useState({ loaded: false });
+  const [modelBusy, setModelBusy] = useState(false);
+  const [modelOperation, setModelOperation] = useState('');
+  const [modelOpen, setModelOpen] = useState(false);
+  const [modelError, setModelError] = useState('');
   const [statsOpen, setStatsOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [filters, setFilters] = useState({ annotated: 'all', attributes: {} });
   const dragStartRef = useRef(null);
   const imageRef = useRef(null);
+  const modelConfigInputRef = useRef(null);
 
   async function loadProject() {
     setError('');
@@ -405,6 +426,18 @@ function Annotator({ projectId, onBack }) {
   useEffect(() => {
     loadProject();
   }, [projectId]);
+
+  async function loadModelStatus() {
+    try {
+      setModelStatus(await api('/model/status'));
+    } catch (err) {
+      setModelError(err.message);
+    }
+  }
+
+  useEffect(() => {
+    loadModelStatus();
+  }, []);
 
   const filteredImages = useMemo(() => {
     const images = project?.images || [];
@@ -424,7 +457,8 @@ function Annotator({ projectId, onBack }) {
   }, [filteredImages.length]);
 
   async function markCurrentAnnotated() {
-    if (!project || !image || image.annotated) return image;
+    if (!project || !image) return image;
+    if (image.annotated && image.annotation_source !== 'model_modified') return image;
     if (!hasSelectedAttribute(image, project.attributes)) return image;
     const updated = await api(`/projects/${project.id}/images/${image.id}/annotated`, { method: 'PUT' });
     setProject((current) => ({
@@ -496,6 +530,62 @@ function Annotator({ projectId, onBack }) {
       setError(err.message);
     } finally {
       setScanBusy(false);
+    }
+  }
+
+  async function loadModelConfig(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setModelBusy(true);
+    setModelOperation('load');
+    setModelError('');
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      setModelStatus(await api('/model/load', {
+        method: 'POST',
+        body: formData,
+      }));
+    } catch (err) {
+      setModelError(err.message);
+    } finally {
+      setModelBusy(false);
+      setModelOperation('');
+      event.target.value = '';
+    }
+  }
+
+  async function unloadModel() {
+    setModelBusy(true);
+    setModelOperation('unload');
+    setModelError('');
+    try {
+      setModelStatus(await api('/model/unload', { method: 'POST' }));
+    } catch (err) {
+      setModelError(err.message);
+    } finally {
+      setModelBusy(false);
+      setModelOperation('');
+    }
+  }
+
+  async function labelUnannotated() {
+    if (!project) return;
+    setModelBusy(true);
+    setModelOperation('label');
+    setModelError('');
+    try {
+      const result = await api(`/projects/${project.id}/model/label-unannotated`, { method: 'POST' });
+      setProject(result.project);
+      setSampleBox(null);
+      setSampleResult(null);
+      await loadModelStatus();
+    } catch (err) {
+      setModelError(err.message);
+    } finally {
+      setModelBusy(false);
+      setModelOperation('');
     }
   }
 
@@ -648,11 +738,54 @@ function Annotator({ projectId, onBack }) {
           </p>
         </div>
         <div className="annotatorActions">
+          <div className="modelMenu">
+            <input
+              ref={modelConfigInputRef}
+              type="file"
+              accept=".yml,.yaml"
+              onChange={loadModelConfig}
+              hidden
+            />
+            <button
+              className={`secondary ${modelOpen ? 'activeTool' : ''}`}
+              onClick={() => {
+                setModelOpen((current) => !current);
+                setStatsOpen(false);
+                setFiltersOpen(false);
+              }}
+            >
+              <Cpu size={18} />Model
+            </button>
+            {modelOpen && (
+              <div className="modelPanel">
+                <div className="modelPanelHeader">
+                  <strong>{modelStatus.loaded ? 'Model loaded' : 'Model not loaded'}</strong>
+                  {modelStatus.loaded && <span>{modelStatus.attributes?.length || 0} attributes</span>}
+                </div>
+                <button
+                  className="modelAction"
+                  onClick={() => modelConfigInputRef.current?.click()}
+                  disabled={modelBusy || modelStatus.loaded}
+                >
+                  {modelOperation === 'load' ? 'Loading...' : 'Load model'}
+                </button>
+                <button className="modelAction" onClick={unloadModel} disabled={modelBusy || !modelStatus.loaded}>
+                  {modelOperation === 'unload' ? 'Unloading...' : 'Unload model'}
+                </button>
+                <button className="modelAction" onClick={labelUnannotated} disabled={modelBusy || !modelStatus.loaded}>
+                  {modelOperation === 'label' ? 'Labeling...' : 'Label unannotated'}
+                </button>
+                {modelStatus.model_path && <span className="modelPath">{modelStatus.model_path}</span>}
+                {modelError && <span className="inlineError">{modelError}</span>}
+              </div>
+            )}
+          </div>
           <div className="statsMenu">
             <button
               className={`secondary ${statsOpen ? 'activeTool' : ''}`}
               onClick={() => {
                 setStatsOpen((current) => !current);
+                setModelOpen(false);
                 setFiltersOpen(false);
               }}
             >
@@ -705,6 +838,7 @@ function Annotator({ projectId, onBack }) {
               className={`secondary ${filtersOpen ? 'activeTool' : ''}`}
               onClick={() => {
                 setFiltersOpen((current) => !current);
+                setModelOpen(false);
                 setStatsOpen(false);
               }}
             >
@@ -721,6 +855,7 @@ function Annotator({ projectId, onBack }) {
                   <select value={filters.annotated} onChange={(event) => updateAnnotatedFilter(event.target.value)}>
                     <option value="all">All</option>
                     <option value="annotated">Annotated</option>
+                    <option value="modelAnnotated">Model annotated</option>
                     <option value="notAnnotated">Not annotated</option>
                   </select>
                 </label>
@@ -759,8 +894,8 @@ function Annotator({ projectId, onBack }) {
               <div className="imageMeta">
                 <div className="imageNameRow">
                   <strong>{image.path.split(/[\\/]/).pop()}</strong>
-                  <span className={`annotationBadge ${image.annotated ? 'annotationBadgeAnnotated' : 'annotationBadgePending'}`}>
-                    {image.annotated ? 'Annotated' : 'Not annotated'}
+                  <span className={`annotationBadge ${getAnnotationBadge(image).className}`}>
+                    {getAnnotationBadge(image).label}
                   </span>
                 </div>
                 <span className="imagePath">{image.path}</span>

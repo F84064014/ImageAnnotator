@@ -297,11 +297,13 @@ textarea:focus {
 }
 
 .filterMenu,
+.modelMenu,
 .statsMenu {
   position: relative;
 }
 
 .filterPanel,
+.modelPanel,
 .statsPanel {
   position: absolute;
   top: calc(100% + 8px);
@@ -323,11 +325,49 @@ textarea:focus {
   width: min(520px, calc(100vw - 28px));
 }
 
-.filterPanelHeader {
+.filterPanelHeader,
+.modelPanelHeader {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.modelPanel {
+  width: min(300px, calc(100vw - 28px));
+}
+
+.modelPanelHeader span {
+  color: #66736c;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.modelAction {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid #d8ddd7;
+  border-radius: 7px;
+  background: white;
+  color: #22302a;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 0 12px;
+  font-weight: 750;
+}
+
+.modelAction:not(:disabled):hover {
+  border-color: #8aa597;
+  background: #f8faf7;
+}
+
+.modelPath {
+  color: #66736c;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.45;
+  word-break: break-all;
 }
 
 .statsPanelHeader {
@@ -503,6 +543,12 @@ textarea:focus {
   color: #8a2323;
   background: #ffe4e4;
   border: 1px solid #e7a1a1;
+}
+
+.annotationBadgeModel {
+  color: #765319;
+  background: #fff0bd;
+  border: 1px solid #e2bb53;
 }
 
 .imagePath {
@@ -741,6 +787,7 @@ textarea:focus {
   }
 
   .filterPanel,
+  .modelPanel,
   .statsPanel {
     left: 0;
     right: auto;

@@ -21,6 +21,12 @@ LEGACY_PROJECTS_FILE = DATA_DIR / "projects.json"
 PROJECTS_DIR = DATA_DIR / "projects"
 PROJECTS_META_FILE = PROJECTS_DIR / "meta.json"
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tif", ".tiff"}
+MODEL_STATE: dict[str, Any] = {
+    "session": None,
+    "config": None,
+    "model_path": None,
+    "input_name": None,
+}
 
 
 app = FastAPI(title="Image Annotator")
@@ -41,6 +47,17 @@ class ProjectCreate(BaseModel):
 
 class AnnotationUpdate(BaseModel):
     attributes: dict[str, int]
+
+
+class ModelConfig(BaseModel):
+    model_path: str
+    input_size: tuple[int, int]
+    attributes: dict[str, dict[str, Any]]
+    output_index: int = 0
+    input_layout: str = "NCHW"
+    input_dtype: str = "auto"
+    mean: list[float] = [0.0, 0.0, 0.0]
+    std: list[float] = [1.0, 1.0, 1.0]
 
 
 def now_iso() -> str:
@@ -212,6 +229,183 @@ def has_selected_attribute(image: dict[str, Any], attributes: list[str]) -> bool
     return any(normalize_attribute_value(image_attributes.get(attribute, 0)) != 0 for attribute in attributes)
 
 
+def normalize_model_path(raw_path: str) -> Path:
+    model_path = Path(raw_path)
+    if not model_path.is_absolute():
+        model_path = IMAGE_ROOT / model_path
+    model_path = model_path.resolve()
+    if not model_path.exists() or not model_path.is_file():
+        raise HTTPException(status_code=400, detail=f"ONNX model not found: {model_path}")
+    if model_path.suffix.lower() != ".onnx":
+        raise HTTPException(status_code=400, detail="Model path must point to a .onnx file")
+    return model_path
+
+
+def normalize_input_size(raw_size: Any) -> tuple[int, int]:
+    if isinstance(raw_size, dict):
+        width = raw_size.get("width") or raw_size.get("w")
+        height = raw_size.get("height") or raw_size.get("h")
+    elif isinstance(raw_size, (list, tuple)) and len(raw_size) == 2:
+        width, height = raw_size
+    else:
+        raise HTTPException(status_code=400, detail="input_size must be [width, height] or {width, height}")
+    width = int(width)
+    height = int(height)
+    if width <= 0 or height <= 0:
+        raise HTTPException(status_code=400, detail="input_size values must be positive")
+    return width, height
+
+
+def normalize_output_attributes(raw_attributes: Any) -> dict[str, dict[str, Any]]:
+    if isinstance(raw_attributes, list):
+        return {
+            str(attribute): {"index": index, "threshold": 0.5, "unknown_margin": 0.0}
+            for index, attribute in enumerate(raw_attributes)
+        }
+    if not isinstance(raw_attributes, dict):
+        raise HTTPException(status_code=400, detail="output_attributes must be a list or mapping")
+
+    normalized = {}
+    for attribute, raw_mapping in raw_attributes.items():
+        attribute_name = str(attribute).strip()
+        if not attribute_name:
+            continue
+        if isinstance(raw_mapping, int):
+            mapping = {"index": raw_mapping}
+        elif isinstance(raw_mapping, dict):
+            mapping = dict(raw_mapping)
+        else:
+            raise HTTPException(status_code=400, detail=f"Invalid mapping for attribute: {attribute_name}")
+        if "index" not in mapping:
+            raise HTTPException(status_code=400, detail=f"Missing output index for attribute: {attribute_name}")
+        normalized[attribute_name] = {
+            "index": int(mapping["index"]),
+            "threshold": float(mapping.get("threshold", 0.5)),
+            "unknown_margin": float(mapping.get("unknown_margin", 0.0)),
+        }
+    if not normalized:
+        raise HTTPException(status_code=400, detail="No output attributes found in model config")
+    return normalized
+
+
+def parse_model_config(raw_config: Any) -> ModelConfig:
+    if not isinstance(raw_config, dict):
+        raise HTTPException(status_code=400, detail="Model config must be a YAML object")
+    model_path = normalize_model_path(str(raw_config.get("model_path", "")).strip())
+    input_size = normalize_input_size(raw_config.get("input_size"))
+    raw_attributes = raw_config.get("output_attributes", raw_config.get("attributes"))
+    attributes = normalize_output_attributes(raw_attributes)
+    return ModelConfig(
+        model_path=str(model_path),
+        input_size=input_size,
+        attributes=attributes,
+        output_index=int(raw_config.get("output_index", 0)),
+        input_layout=str(raw_config.get("input_layout", "NCHW")).upper(),
+        input_dtype=str(raw_config.get("input_dtype", "auto")).lower(),
+        mean=[float(value) for value in raw_config.get("mean", [0.0, 0.0, 0.0])],
+        std=[float(value) for value in raw_config.get("std", [1.0, 1.0, 1.0])],
+    )
+
+
+def get_model_status() -> dict[str, Any]:
+    config: ModelConfig | None = MODEL_STATE["config"]
+    return {
+        "loaded": MODEL_STATE["session"] is not None,
+        "model_path": str(MODEL_STATE["model_path"]) if MODEL_STATE["model_path"] else None,
+        "attributes": list(config.attributes.keys()) if config else [],
+        "input_size": list(config.input_size) if config else None,
+    }
+
+
+def require_model() -> tuple[Any, ModelConfig, str]:
+    session = MODEL_STATE["session"]
+    config = MODEL_STATE["config"]
+    input_name = MODEL_STATE["input_name"]
+    if session is None or config is None or input_name is None:
+        raise HTTPException(status_code=400, detail="No model loaded")
+    return session, config, input_name
+
+
+def resolve_model_input_dtype(session: Any, config: ModelConfig) -> str:
+    if config.input_dtype != "auto":
+        return config.input_dtype
+    input_type = str(session.get_inputs()[0].type).lower()
+    if "uint8" in input_type:
+        return "uint8"
+    if "float16" in input_type:
+        return "float16"
+    if "double" in input_type or "float64" in input_type:
+        return "float64"
+    return "float32"
+
+
+def preprocess_image_for_model(image_path: Path, config: ModelConfig) -> Any:
+    try:
+        import numpy as np
+        from PIL import Image
+    except ImportError as exc:
+        raise HTTPException(status_code=500, detail="Pillow and numpy are required for model inference") from exc
+
+    width, height = config.input_size
+    with Image.open(image_path) as image:
+        array = np.asarray(image.convert("RGB").resize((width, height)))
+
+    session, _, _ = require_model()
+    input_dtype = resolve_model_input_dtype(session, config)
+    if input_dtype == "uint8":
+        array = array.astype(np.uint8)
+    else:
+        np_dtype = {
+            "float16": np.float16,
+            "float32": np.float32,
+            "float64": np.float64,
+        }.get(input_dtype)
+        if np_dtype is None:
+            raise HTTPException(status_code=400, detail=f"Unsupported input_dtype: {input_dtype}")
+        array = array.astype(np_dtype) / np_dtype(255.0)
+        mean = np.asarray(config.mean, dtype=np_dtype).reshape(1, 1, 3)
+        std = np.asarray(config.std, dtype=np_dtype).reshape(1, 1, 3)
+        std = np.where(std == 0, 1.0, std)
+        array = (array - mean) / std
+
+    if config.input_layout == "NCHW":
+        array = np.transpose(array, (2, 0, 1))[None, :, :, :]
+    elif config.input_layout == "NHWC":
+        array = array[None, :, :, :]
+    else:
+        raise HTTPException(status_code=400, detail="input_layout must be NCHW or NHWC")
+    return array
+
+
+def predict_image_attributes(image_path: Path) -> dict[str, int]:
+    try:
+        import numpy as np
+    except ImportError as exc:
+        raise HTTPException(status_code=500, detail="numpy is required for model inference") from exc
+
+    session, config, input_name = require_model()
+    model_input = preprocess_image_for_model(image_path, config)
+    outputs = session.run(None, {input_name: model_input})
+    try:
+        scores = np.asarray(outputs[config.output_index]).reshape(-1)
+    except IndexError as exc:
+        raise HTTPException(status_code=500, detail="Model output_index is out of range") from exc
+
+    attributes = {}
+    for attribute, mapping in config.attributes.items():
+        index = mapping["index"]
+        if index >= scores.size:
+            raise HTTPException(status_code=500, detail=f"Output index out of range for attribute: {attribute}")
+        score = float(scores[index])
+        threshold = mapping["threshold"]
+        unknown_margin = mapping["unknown_margin"]
+        if unknown_margin > 0 and abs(score - threshold) <= unknown_margin:
+            attributes[attribute] = 2
+        else:
+            attributes[attribute] = 1 if score >= threshold else 0
+    return attributes
+
+
 def prepare_imported_project(raw_project: Any, meta: list[dict[str, Any]]) -> dict[str, Any]:
     if not isinstance(raw_project, dict):
         raise HTTPException(status_code=400, detail="Project JSON must be an object")
@@ -276,6 +470,49 @@ def prepare_imported_project(raw_project: Any, meta: list[dict[str, Any]]) -> di
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/model/status")
+def model_status() -> dict[str, Any]:
+    return get_model_status()
+
+
+@app.post("/model/load")
+async def load_model(file: UploadFile = File(...)) -> dict[str, Any]:
+    if not file.filename.lower().endswith((".yml", ".yaml")):
+        raise HTTPException(status_code=400, detail="Please upload a .yml or .yaml model config")
+
+    try:
+        import onnxruntime as ort
+        import yaml
+    except ImportError as exc:
+        raise HTTPException(status_code=500, detail="onnxruntime and PyYAML are required to load models") from exc
+
+    try:
+        raw_config = yaml.safe_load((await file.read()).decode("utf-8"))
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Model config must be UTF-8 YAML") from exc
+
+    config = parse_model_config(raw_config)
+    try:
+        session = ort.InferenceSession(config.model_path, providers=["CPUExecutionProvider"])
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Unable to load ONNX model: {exc}") from exc
+
+    MODEL_STATE["session"] = session
+    MODEL_STATE["config"] = config
+    MODEL_STATE["model_path"] = Path(config.model_path)
+    MODEL_STATE["input_name"] = session.get_inputs()[0].name
+    return get_model_status()
+
+
+@app.post("/model/unload")
+def unload_model() -> dict[str, Any]:
+    MODEL_STATE["session"] = None
+    MODEL_STATE["config"] = None
+    MODEL_STATE["model_path"] = None
+    MODEL_STATE["input_name"] = None
+    return get_model_status()
 
 
 @app.get("/projects")
@@ -390,6 +627,36 @@ def scan_project_images(project_id: str) -> dict[str, Any]:
     return project
 
 
+@app.post("/projects/{project_id}/model/label-unannotated")
+def label_unannotated_with_model(project_id: str) -> dict[str, Any]:
+    _, config, _ = require_model()
+    meta, _, project = find_project(project_id)
+    mapped_attributes = set(config.attributes.keys()) & set(project["attributes"])
+    if not mapped_attributes:
+        raise HTTPException(status_code=400, detail="Loaded model has no attributes that match this project")
+
+    labeled_count = 0
+    for image in project["images"]:
+        if image.get("annotated"):
+            continue
+        predictions = predict_image_attributes(resolve_image_path(image["path"]))
+        next_attributes = {
+            attribute: normalize_attribute_value(image.get("attributes", {}).get(attribute, 0))
+            for attribute in project["attributes"]
+        }
+        for attribute in mapped_attributes:
+            next_attributes[attribute] = predictions[attribute]
+        image["attributes"] = next_attributes
+        image["annotated"] = True
+        image["annotation_source"] = "model"
+        labeled_count += 1
+
+    if labeled_count:
+        project["updated_at"] = now_iso()
+        save_project(project, meta)
+    return {"project": project, "labeled_count": labeled_count}
+
+
 @app.put("/projects/{project_id}/images/{image_id}/annotation")
 def update_annotation(project_id: str, image_id: str, payload: AnnotationUpdate) -> dict[str, Any]:
     meta, _, project = find_project(project_id)
@@ -400,6 +667,8 @@ def update_annotation(project_id: str, image_id: str, payload: AnnotationUpdate)
     image["attributes"] = {}
     for attribute in project["attributes"]:
         image["attributes"][attribute] = validate_attribute_value(payload.attributes.get(attribute, 2))
+    if image.get("annotated") and image.get("annotation_source") in {"model", "model_modified"}:
+        image["annotation_source"] = "model_modified"
     project["updated_at"] = now_iso()
     save_project(project, meta)
     return image
@@ -414,6 +683,7 @@ def mark_image_annotated(project_id: str, image_id: str) -> dict[str, Any]:
 
     if has_selected_attribute(image, project["attributes"]):
         image["annotated"] = True
+        image["annotation_source"] = "manual"
         project["updated_at"] = now_iso()
         save_project(project, meta)
     return image
