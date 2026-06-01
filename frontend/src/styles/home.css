@@ -1,0 +1,142 @@
+﻿.projectList {
+  display: grid;
+  gap: 10px;
+}
+
+.projectItem {
+  width: 100%;
+  min-height: 76px;
+  border: 1px solid #dfe4de;
+  border-radius: 8px;
+  background: white;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  color: inherit;
+}
+
+.projectItem:hover {
+  border-color: #8aa597;
+}
+
+.projectOpen {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.projectOpen:focus-visible {
+  outline: 3px solid rgba(29, 107, 79, 0.18);
+  border-radius: 6px;
+}
+
+.projectOpen {
+  min-width: 0;
+}
+
+.projectOpen strong,
+.projectOpen span {
+  display: block;
+}
+
+.projectOpen span {
+  color: #66736c;
+  margin-top: 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.projectStats {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.empty,
+.alert {
+  min-height: 160px;
+  border: 1px dashed #cbd3cc;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: #66736c;
+  background: rgba(255, 255, 255, 0.58);
+  text-align: center;
+}
+
+.alert {
+  min-height: auto;
+  display: block;
+  border-style: solid;
+  border-color: #e5bcbc;
+  color: #8f2929;
+  background: #fff3f3;
+  padding: 12px 14px;
+  margin: 12px 0;
+}
+
+.modalBackdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(14, 20, 17, 0.42);
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  z-index: 10;
+}
+
+.modal {
+  width: min(520px, 100%);
+  background: white;
+  border-radius: 8px;
+  padding: 22px;
+  box-shadow: 0 24px 80px rgba(17, 31, 24, 0.2);
+  display: grid;
+  gap: 16px;
+}
+
+label {
+  display: grid;
+  gap: 7px;
+  color: #394740;
+  font-weight: 650;
+}
+
+input,
+select,
+textarea {
+  border: 1px solid #ccd4ce;
+  border-radius: 7px;
+  min-height: 40px;
+  padding: 9px 10px;
+  color: #17201b;
+  background: white;
+  outline: none;
+}
+
+textarea {
+  min-height: 92px;
+  resize: vertical;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: #1d6b4f;
+  box-shadow: 0 0 0 3px rgba(29, 107, 79, 0.14);
+}
+
+.actions,
+.navButtons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+

@@ -1,0 +1,136 @@
+﻿:root {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #17201b;
+  background: #f4f5f1;
+  font-synthesis: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.page {
+  min-height: 100vh;
+  padding: 28px;
+}
+
+.workspace {
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.topbar,
+.annotatorHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.topbarActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.importProject {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.inlineError {
+  color: #8f2929;
+  font-size: 12px;
+  font-weight: 650;
+  max-width: 220px;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: 32px;
+  line-height: 1.15;
+}
+
+h2 {
+  font-size: 22px;
+}
+
+p {
+  color: #66736c;
+  margin-top: 5px;
+}
+
+.primary,
+.secondary,
+.iconButton {
+  border: 1px solid transparent;
+  border-radius: 7px;
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-decoration: none;
+}
+
+.primary {
+  background: #1d6b4f;
+  color: white;
+  padding: 0 15px;
+}
+
+.secondary {
+  background: white;
+  color: #22302a;
+  border-color: #d8ddd7;
+  padding: 0 14px;
+}
+
+.secondary.activeTool {
+  background: #eaf6ef;
+  border-color: #1d6b4f;
+  color: #174d3a;
+}
+
+.iconButton {
+  width: 38px;
+  background: white;
+  color: #22302a;
+  border-color: #d8ddd7;
+  flex: 0 0 auto;
+}
+
+.danger {
+  color: #a93434;
+}
+
