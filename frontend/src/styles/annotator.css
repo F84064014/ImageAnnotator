@@ -20,12 +20,14 @@
 
 .filterMenu,
 .modelMenu,
+.settingsMenu,
 .statsMenu {
   position: relative;
 }
 
 .filterPanel,
 .modelPanel,
+.settingsPanel,
 .statsPanel {
   position: absolute;
   top: calc(100% + 8px);
@@ -57,6 +59,10 @@
 
 .modelPanel {
   width: min(300px, calc(100vw - 28px));
+}
+
+.settingsPanel {
+  width: min(520px, calc(100vw - 28px));
 }
 
 .modelPanelHeader span {
@@ -97,6 +103,33 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.settingsPanelHeader,
+.settingsSectionHeader,
+.settingsActions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settingsSectionHeader {
+  margin-bottom: -4px;
+}
+
+.settingsAttributeList {
+  display: grid;
+  gap: 8px;
+  max-height: 280px;
+  overflow: auto;
+}
+
+.settingsAttributeRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 38px;
+  gap: 8px;
+  align-items: center;
 }
 
 .statsPanelHeader span {
@@ -174,6 +207,9 @@
   color: #1d6b4f;
   font-weight: 750;
   padding: 4px 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
 
 .filterAttributeList {
@@ -510,6 +546,7 @@
 
   .filterPanel,
   .modelPanel,
+  .settingsPanel,
   .statsPanel {
     left: 0;
     right: auto;

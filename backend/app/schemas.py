@@ -11,6 +11,11 @@ class AnnotationUpdate(BaseModel):
     attributes: dict[str, int]
 
 
+class ProjectSettingsUpdate(BaseModel):
+    image_directory: str = Field(min_length=1)
+    attributes: list[str] = Field(min_length=1)
+
+
 class ModelConfig(BaseModel):
     model_path: str
     input_size: tuple[int, int]

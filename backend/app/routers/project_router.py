@@ -11,7 +11,7 @@ from fastapi.responses import (
     FileResponse, StreamingResponse
 )
 from app.schemas import (
-    AnnotationUpdate, ProjectCreate
+    AnnotationUpdate, ProjectCreate, ProjectSettingsUpdate
 )
 from app.utils import now_iso
 from app.services.project_service import (
@@ -119,6 +119,27 @@ def delete_project(project_id: str) -> None:
 @router.get("/projects/{project_id}")
 def get_project(project_id: str) -> dict[str, Any]:
     _, _, project = find_project(project_id)
+    return project
+
+
+@router.put("/projects/{project_id}/settings")
+def update_project_settings(project_id: str, payload: ProjectSettingsUpdate) -> dict[str, Any]:
+    meta, _, project = find_project(project_id)
+    directory = resolve_image_directory(payload.image_directory)
+    attributes = list(dict.fromkeys(attribute.strip() for attribute in payload.attributes if attribute.strip()))
+    if not attributes:
+        raise HTTPException(status_code=400, detail="At least one attribute is required")
+
+    project["image_directory"] = str(directory)
+    project["attributes"] = attributes
+    for image in project["images"]:
+        current_attributes = image.get("attributes", {})
+        image["attributes"] = {
+            attribute: normalize_attribute_value(current_attributes.get(attribute, 0))
+            for attribute in attributes
+        }
+    project["updated_at"] = now_iso()
+    save_project(project, meta)
     return project
 
 

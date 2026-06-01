@@ -1,5 +1,5 @@
 ﻿import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, BarChart3, ChevronLeft, ChevronRight, Cpu, Download, Filter, Minimize2, Pipette, RefreshCw } from 'lucide-react';
+import { ArrowLeft, BarChart3, ChevronLeft, ChevronRight, Cpu, Download, Filter, Minimize2, Pipette, Plus, RefreshCw, Settings, Trash2 } from 'lucide-react';
 import { API_URL, api } from '../api/client';
 import TriStateAttribute from './TriStateAttribute';
 import { classifyColor, rgbToHsv } from '../utils/colorClassifier';
@@ -28,6 +28,11 @@ export default function Annotator({ projectId, onBack }) {
   const [modelError, setModelError] = useState('');
   const [statsOpen, setStatsOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsBusy, setSettingsBusy] = useState(false);
+  const [settingsError, setSettingsError] = useState('');
+  const [settingsDirectory, setSettingsDirectory] = useState('');
+  const [settingsAttributes, setSettingsAttributes] = useState([]);
   const [filters, setFilters] = useState({ annotated: 'all', attributes: {} });
   const dragStartRef = useRef(null);
   const imageRef = useRef(null);
@@ -45,6 +50,12 @@ export default function Annotator({ projectId, onBack }) {
   useEffect(() => {
     loadProject();
   }, [projectId]);
+
+  useEffect(() => {
+    if (!project) return;
+    setSettingsDirectory(project.image_directory || '');
+    setSettingsAttributes(project.attributes || []);
+  }, [project]);
 
   async function loadModelStatus() {
     try {
@@ -136,20 +147,64 @@ export default function Annotator({ projectId, onBack }) {
     }));
   }
 
-  async function scanImages() {
+  async function saveSettings() {
     if (!project) return;
-    setScanBusy(true);
-    setError('');
+    const attributes = settingsAttributes.map((attribute) => attribute.trim()).filter(Boolean);
+    setSettingsBusy(true);
+    setSettingsError('');
     try {
-      const updated = await api(`/projects/${project.id}/scan`, { method: 'POST' });
+      const updated = await api(`/projects/${project.id}/settings`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          image_directory: settingsDirectory,
+          attributes,
+        }),
+      });
+      setProject(updated);
+      setFilters({ annotated: 'all', attributes: {} });
+      setIndex(0);
+      setSampleBox(null);
+      setSampleResult(null);
+      return updated;
+    } catch (err) {
+      setSettingsError(err.message);
+      return null;
+    } finally {
+      setSettingsBusy(false);
+    }
+  }
+
+  async function scanWithSettings() {
+    if (!project) return;
+    const updatedSettings = await saveSettings();
+    if (!updatedSettings) return;
+
+    setScanBusy(true);
+    setSettingsError('');
+    try {
+      const updated = await api(`/projects/${updatedSettings.id}/scan`, { method: 'POST' });
       setProject(updated);
       setSampleBox(null);
       setSampleResult(null);
     } catch (err) {
-      setError(err.message);
+      setSettingsError(err.message);
     } finally {
       setScanBusy(false);
     }
+  }
+
+  function updateSettingAttribute(index, value) {
+    setSettingsAttributes((current) => current.map((attribute, itemIndex) => (
+      itemIndex === index ? value : attribute
+    )));
+  }
+
+  function addSettingAttribute() {
+    setSettingsAttributes((current) => [...current, 'New-Attribute']);
+  }
+
+  function deleteSettingAttribute(index) {
+    setSettingsAttributes((current) => current.filter((_, itemIndex) => itemIndex !== index));
   }
 
   async function loadModelConfig(event) {
@@ -327,6 +382,7 @@ export default function Annotator({ projectId, onBack }) {
                 setModelOpen((current) => !current);
                 setStatsOpen(false);
                 setFiltersOpen(false);
+                setSettingsOpen(false);
               }}
             >
               <Cpu size={18} />Model
@@ -362,6 +418,7 @@ export default function Annotator({ projectId, onBack }) {
                 setStatsOpen((current) => !current);
                 setModelOpen(false);
                 setFiltersOpen(false);
+                setSettingsOpen(false);
               }}
             >
               <BarChart3 size={18} />Stats
@@ -415,6 +472,7 @@ export default function Annotator({ projectId, onBack }) {
                 setFiltersOpen((current) => !current);
                 setModelOpen(false);
                 setStatsOpen(false);
+                setSettingsOpen(false);
               }}
             >
               <Filter size={18} />Filters{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
@@ -453,9 +511,63 @@ export default function Annotator({ projectId, onBack }) {
               </div>
             )}
           </div>
-          <button className="secondary" onClick={scanImages} disabled={scanBusy}>
-            <RefreshCw size={18} />{scanBusy ? 'Scanning...' : 'Scan'}
-          </button>
+          <div className="settingsMenu">
+            <button
+              className={`secondary ${settingsOpen ? 'activeTool' : ''}`}
+              onClick={() => {
+                setSettingsOpen((current) => !current);
+                setModelOpen(false);
+                setStatsOpen(false);
+                setFiltersOpen(false);
+              }}
+            >
+              <Settings size={18} />Settings
+            </button>
+            {settingsOpen && (
+              <div className="settingsPanel">
+                <div className="settingsPanelHeader">
+                  <strong>Project Settings</strong>
+                </div>
+                <label>
+                  Image directory
+                  <input value={settingsDirectory} onChange={(event) => setSettingsDirectory(event.target.value)} />
+                </label>
+                <div className="settingsSectionHeader">
+                  <strong>Attributes</strong>
+                  <button className="textButton" onClick={addSettingAttribute}>
+                    <Plus size={16} />Add
+                  </button>
+                </div>
+                <div className="settingsAttributeList">
+                  {settingsAttributes.map((attribute, attributeIndex) => (
+                    <div className="settingsAttributeRow" key={`${attributeIndex}-${attribute}`}>
+                      <input
+                        value={attribute}
+                        onChange={(event) => updateSettingAttribute(attributeIndex, event.target.value)}
+                      />
+                      <button
+                        className="iconButton danger"
+                        title="Delete attribute"
+                        onClick={() => deleteSettingAttribute(attributeIndex)}
+                        disabled={settingsAttributes.length <= 1}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                {settingsError && <span className="inlineError">{settingsError}</span>}
+                <div className="settingsActions">
+                  <button className="secondary" onClick={scanWithSettings} disabled={scanBusy || settingsBusy}>
+                    <RefreshCw size={18} />{scanBusy ? 'Scanning...' : 'Scan Images'}
+                  </button>
+                  <button className="primary" onClick={saveSettings} disabled={settingsBusy}>
+                    {settingsBusy ? 'Saving...' : 'Save'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
           <a className="primary" href={`${API_URL}/projects/${project.id}/export`}>
             <Download size={18} />Export CSV
           </a>
