@@ -132,6 +132,33 @@
   align-items: center;
 }
 
+.maskSettingRow {
+  display: grid;
+  grid-template-columns: minmax(0, 0.75fr) minmax(0, 1.15fr) 44px minmax(120px, 0.8fr) 38px;
+  gap: 8px;
+  align-items: center;
+}
+
+.maskSettingRow input[type="color"] {
+  min-height: 38px;
+  width: 44px;
+  padding: 3px;
+}
+
+.maskOpacityControl {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.maskOpacityControl input[type="range"] {
+  min-height: 0;
+  padding: 0;
+}
+
 .statsPanelHeader span {
   color: #66736c;
   font-size: 13px;
@@ -221,6 +248,42 @@
   grid-template-columns: minmax(0, 1fr) 128px;
   align-items: center;
   gap: 10px;
+}
+
+.filterAddButton {
+  min-height: 52px;
+  border: 1px dashed #b7c5bc;
+  border-radius: 8px;
+  background: #f8faf7;
+  color: #1d6b4f;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-weight: 800;
+}
+
+.filterAddButton:hover {
+  border-color: #1d6b4f;
+  background: #eef8f2;
+}
+
+.filterConditionList {
+  display: grid;
+  gap: 8px;
+}
+
+.filterLoading {
+  color: #66736c;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.filterConditionRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) 82px minmax(0, 0.9fr) 38px;
+  gap: 8px;
+  align-items: center;
 }
 
 .filterEmpty {
@@ -336,6 +399,63 @@
   padding: 12px;
 }
 
+.maskGroup {
+  border: 1px solid #dfe4de;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 12px;
+}
+
+.maskGroup legend {
+  color: #394740;
+  font-size: 13px;
+  font-weight: 750;
+  padding: 0 6px;
+}
+
+.maskRow {
+  min-height: 40px;
+  border: 1px solid #dfe4de;
+  border-radius: 7px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 38px 38px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 0 12px;
+  background: #fff;
+}
+
+.maskRow span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 750;
+}
+
+.maskRowEditing {
+  border-color: #1d6b4f;
+  background: #f1faf5;
+}
+
+.maskEditActions {
+  border-top: 1px solid #e6ebe6;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 10px;
+}
+
+.maskEditActions span {
+  color: #394740;
+  font-size: 13px;
+  font-weight: 750;
+  margin-right: auto;
+}
+
 .attributeGroup legend {
   color: #394740;
   font-size: 13px;
@@ -433,12 +553,45 @@
   cursor: crosshair;
 }
 
+.imageSampleSurface:has(.maskEditCanvas) {
+  cursor: crosshair;
+}
+
 .imageStage img {
   display: block;
   width: auto;
   height: 512px;
   max-width: 100%;
   object-fit: contain;
+  pointer-events: none;
+}
+
+.imageStage .maskOverlay,
+.imageStage .maskEditCanvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  max-width: none;
+}
+
+.imageStage .maskOverlay {
+  opacity: var(--mask-opacity, 0.55);
+  background: var(--mask-color, #ff3b8f);
+  mix-blend-mode: normal;
+  -webkit-mask-image: var(--mask-url);
+  mask-image: var(--mask-url);
+  -webkit-mask-mode: luminance;
+  mask-mode: luminance;
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  object-fit: fill;
+}
+
+.maskEditCanvas {
   pointer-events: none;
 }
 
@@ -554,6 +707,14 @@
 
   .filterAttributeList label {
     grid-template-columns: 1fr;
+  }
+
+  .filterConditionRow {
+    grid-template-columns: 1fr;
+  }
+
+  .maskSettingRow {
+    grid-template-columns: 1fr 1fr 44px 1fr 38px;
   }
 
   h1 {

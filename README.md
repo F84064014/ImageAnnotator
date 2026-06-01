@@ -19,6 +19,7 @@ docker compose up --build
 ```
 
 When creating a project, enter an image directory relative to that mounted root, for example `/images` or `/images/subfolder`.
+Image and mask directories can include `*` wildcards. For example `/images/ExportData_2026_0528/*/images` scans both `/images/ExportData_2026_0528/train/images` and `/images/ExportData_2026_0528/val/images`. Mask directories can use the same wildcard layout, such as `/images/ExportData_2026_0528/*/masks`, so masks for train images are saved under the train mask directory and val images under the val mask directory.
 
 ## Data
 
@@ -30,6 +31,7 @@ The home page can import a project from one of these project JSON files with the
 CSV export includes image path, annotation status, and one column per project attribute.
 Attribute values are exported as `0` for False, `1` for True, and `2` for Unknown.
 Attributes named with `Group-Name` are displayed under a `Group` box in the annotator, using `Name` as the visible label. If a name contains multiple dashes, the last dash splits the group and label, so `UpperBody-Color-Black` appears as `Black` under `UpperBody-Color`.
+Projects can also define mask labels. Each mask label has a name, mask directory, display color, and opacity. Masks are saved as PNG files in that directory using the source image basename with a `.png` suffix.
 
 The annotation screen displays images at `height: 512px`. The Resize button only toggles the on-screen display between original-width-by-512-height and `256x512`; it does not modify image files.
 The Sampler button, or the `s` key, lets you draw a rectangle on the image, averages RGB inside that region, converts it to HSV, and maps it to the supported color labels with simple HSV rules. Sampler mode exits after one selection.

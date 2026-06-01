@@ -116,6 +116,7 @@ function CreateProject({ onCreated }) {
   const [name, setName] = useState('');
   const [directory, setDirectory] = useState('/images');
   const [attributesText, setAttributesText] = useState(DEFAULT_ATTRIBUTES.join(','));
+  const [maskLabels, setMaskLabels] = useState([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -130,6 +131,14 @@ function CreateProject({ onCreated }) {
           name,
           image_directory: directory,
           attributes: attributesText.split(',').map((item) => item.trim()).filter(Boolean),
+          mask_labels: maskLabels
+            .map((label) => ({
+              name: label.name.trim(),
+              directory: label.directory.trim(),
+              color: label.color || '#ff3b8f',
+              opacity: Number(label.opacity ?? 0.55),
+            }))
+            .filter((label) => label.name && label.directory),
         }),
       });
       setOpen(false);
@@ -161,6 +170,70 @@ function CreateProject({ onCreated }) {
               Attributes
               <textarea value={attributesText} onChange={(event) => setAttributesText(event.target.value)} required />
             </label>
+            <div className="settingsSectionHeader">
+              <strong>Mask labels</strong>
+              <button
+                type="button"
+                className="textButton"
+                onClick={() => setMaskLabels((current) => [...current, {
+                  name: 'Mask',
+                  directory: '/images/masks',
+                  color: '#ff3b8f',
+                  opacity: 0.55,
+                }])}
+              >
+                <Plus size={16} />Add
+              </button>
+            </div>
+            <div className="settingsAttributeList">
+              {maskLabels.map((label, labelIndex) => (
+                <div className="maskSettingRow" key={labelIndex}>
+                  <input
+                    value={label.name}
+                    placeholder="Mask name"
+                    onChange={(event) => setMaskLabels((current) => current.map((item, itemIndex) => (
+                      itemIndex === labelIndex ? { ...item, name: event.target.value } : item
+                    )))}
+                  />
+                  <input
+                    value={label.directory}
+                    placeholder="Mask directory"
+                    onChange={(event) => setMaskLabels((current) => current.map((item, itemIndex) => (
+                      itemIndex === labelIndex ? { ...item, directory: event.target.value } : item
+                    )))}
+                  />
+                  <input
+                    type="color"
+                    title="Mask color"
+                    value={label.color || '#ff3b8f'}
+                    onChange={(event) => setMaskLabels((current) => current.map((item, itemIndex) => (
+                      itemIndex === labelIndex ? { ...item, color: event.target.value } : item
+                    )))}
+                  />
+                  <label className="maskOpacityControl">
+                    <span>{Math.round(Number(label.opacity ?? 0.55) * 100)}%</span>
+                    <input
+                      type="range"
+                      min="0.05"
+                      max="1"
+                      step="0.05"
+                      value={label.opacity ?? 0.55}
+                      onChange={(event) => setMaskLabels((current) => current.map((item, itemIndex) => (
+                        itemIndex === labelIndex ? { ...item, opacity: event.target.value } : item
+                      )))}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className="iconButton danger"
+                    title="Delete mask label"
+                    onClick={() => setMaskLabels((current) => current.filter((_, itemIndex) => itemIndex !== labelIndex))}
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              ))}
+            </div>
             {error && <div className="alert">{error}</div>}
             <div className="actions">
               <button type="button" className="secondary" onClick={() => setOpen(false)}>Cancel</button>

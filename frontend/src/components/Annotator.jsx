@@ -1,5 +1,5 @@
 ﻿import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, BarChart3, ChevronLeft, ChevronRight, Cpu, Download, Filter, Minimize2, Pipette, Plus, RefreshCw, Settings, Trash2 } from 'lucide-react';
+import { ArrowLeft, BarChart3, ChevronLeft, ChevronRight, Cpu, Download, Edit3, Eye, EyeOff, Filter, Minimize2, Pipette, Plus, RefreshCw, Save, Settings, Trash2, X } from 'lucide-react';
 import { API_URL, api } from '../api/client';
 import TriStateAttribute from './TriStateAttribute';
 import { classifyColor, rgbToHsv } from '../utils/colorClassifier';
@@ -33,15 +33,26 @@ export default function Annotator({ projectId, onBack }) {
   const [settingsError, setSettingsError] = useState('');
   const [settingsDirectory, setSettingsDirectory] = useState('');
   const [settingsAttributes, setSettingsAttributes] = useState([]);
-  const [filters, setFilters] = useState({ annotated: 'all', attributes: {} });
+  const [settingsMasks, setSettingsMasks] = useState([]);
+  const [visibleMasks, setVisibleMasks] = useState({});
+  const [editingMask, setEditingMask] = useState('');
+  const [maskVersions, setMaskVersions] = useState({});
+  const [maskStatusLoaded, setMaskStatusLoaded] = useState(false);
+  const [maskStatusLoading, setMaskStatusLoading] = useState(false);
+  const [maskBusy, setMaskBusy] = useState(false);
+  const [maskError, setMaskError] = useState('');
+  const [filters, setFilters] = useState([]);
   const dragStartRef = useRef(null);
+  const maskDrawingRef = useRef(false);
   const imageRef = useRef(null);
+  const maskCanvasRef = useRef(null);
   const modelConfigInputRef = useRef(null);
 
   async function loadProject() {
     setError('');
     try {
       setProject(await api(`/projects/${projectId}`));
+      setMaskStatusLoaded(false);
     } catch (err) {
       setError(err.message);
     }
@@ -55,6 +66,7 @@ export default function Annotator({ projectId, onBack }) {
     if (!project) return;
     setSettingsDirectory(project.image_directory || '');
     setSettingsAttributes(project.attributes || []);
+    setSettingsMasks(project.mask_labels || []);
   }, [project]);
 
   async function loadModelStatus() {
@@ -77,14 +89,81 @@ export default function Annotator({ projectId, onBack }) {
   const annotatedCount = useMemo(() => project?.images.filter((item) => item.annotated).length || 0, [project]);
   const attributeGroups = useMemo(() => groupAttributes(project?.attributes || []), [project]);
   const attributeStats = useMemo(() => getAttributeStats(project?.images || [], project?.attributes || []), [project]);
-  const activeFilterCount = useMemo(() => (
-    (filters.annotated === 'all' ? 0 : 1)
-    + Object.values(filters.attributes).filter((value) => value !== 'all').length
+  const activeFilterCount = filters.length;
+  const filtersUseMasks = useMemo(() => (
+    filters.some((condition) => condition.target?.startsWith('mask:'))
   ), [filters]);
+  const editingMaskLabel = useMemo(() => (
+    (project?.mask_labels || []).find((mask) => mask.name === editingMask)
+  ), [project, editingMask]);
+  const editingMaskColor = editingMaskLabel?.color || '#ff3b8f';
+  const editingMaskOpacity = Number(editingMaskLabel?.opacity ?? 0.55);
+
+  useEffect(() => {
+    if (!editingMask || !image || !imageRef.current || !maskCanvasRef.current) return;
+    const imageElement = imageRef.current;
+    const canvas = maskCanvasRef.current;
+    canvas.width = imageElement.clientWidth;
+    canvas.height = imageElement.clientHeight;
+    const context = canvas.getContext('2d');
+    context.clearRect(0, 0, canvas.width, canvas.height);
+
+    const maskImage = new Image();
+    maskImage.crossOrigin = 'anonymous';
+    maskImage.onload = () => {
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      const offscreen = document.createElement('canvas');
+      offscreen.width = canvas.width;
+      offscreen.height = canvas.height;
+      const offscreenContext = offscreen.getContext('2d');
+      offscreenContext.drawImage(maskImage, 0, 0, canvas.width, canvas.height);
+      const imageData = offscreenContext.getImageData(0, 0, canvas.width, canvas.height);
+      const red = Number.parseInt(editingMaskColor.slice(1, 3), 16);
+      const green = Number.parseInt(editingMaskColor.slice(3, 5), 16);
+      const blue = Number.parseInt(editingMaskColor.slice(5, 7), 16);
+      for (let offset = 0; offset < imageData.data.length; offset += 4) {
+        const value = Math.max(imageData.data[offset], imageData.data[offset + 1], imageData.data[offset + 2]);
+        imageData.data[offset] = red;
+        imageData.data[offset + 1] = green;
+        imageData.data[offset + 2] = blue;
+        imageData.data[offset + 3] = value > 127 ? Math.round(255 * editingMaskOpacity) : 0;
+      }
+      context.putImageData(imageData, 0, 0);
+    };
+    maskImage.onerror = () => {
+      context.clearRect(0, 0, canvas.width, canvas.height);
+    };
+    maskImage.src = maskUrl(image, editingMask);
+  }, [editingMask, image?.id, displayResized, editingMaskColor, editingMaskOpacity]);
 
   useEffect(() => {
     setIndex((current) => Math.min(current, Math.max(filteredImages.length - 1, 0)));
   }, [filteredImages.length]);
+
+  useEffect(() => {
+    async function loadMaskStatus() {
+      if (!project || !filtersUseMasks || maskStatusLoaded || maskStatusLoading) return;
+      setMaskStatusLoading(true);
+      setMaskError('');
+      try {
+        const statusByImageId = await api(`/projects/${project.id}/mask-status`);
+        setProject((current) => current ? ({
+          ...current,
+          images: current.images.map((item) => ({
+            ...item,
+            mask_status: statusByImageId[item.id] || {},
+          })),
+        }) : current);
+        setMaskStatusLoaded(true);
+      } catch (err) {
+        setMaskError(err.message);
+        setMaskStatusLoaded(true);
+      } finally {
+        setMaskStatusLoading(false);
+      }
+    }
+    loadMaskStatus();
+  }, [project?.id, filtersUseMasks, maskStatusLoaded, maskStatusLoading]);
 
   async function markCurrentAnnotated() {
     if (!project || !image) return image;
@@ -158,10 +237,19 @@ export default function Annotator({ projectId, onBack }) {
         body: JSON.stringify({
           image_directory: settingsDirectory,
           attributes,
+          mask_labels: settingsMasks
+            .map((label) => ({
+              name: label.name.trim(),
+              directory: label.directory.trim(),
+              color: label.color || '#ff3b8f',
+              opacity: Number(label.opacity ?? 0.55),
+            }))
+            .filter((label) => label.name && label.directory),
         }),
       });
       setProject(updated);
-      setFilters({ annotated: 'all', attributes: {} });
+      setMaskStatusLoaded(false);
+      setFilters([]);
       setIndex(0);
       setSampleBox(null);
       setSampleResult(null);
@@ -184,6 +272,7 @@ export default function Annotator({ projectId, onBack }) {
     try {
       const updated = await api(`/projects/${updatedSettings.id}/scan`, { method: 'POST' });
       setProject(updated);
+      setMaskStatusLoaded(false);
       setSampleBox(null);
       setSampleResult(null);
     } catch (err) {
@@ -205,6 +294,25 @@ export default function Annotator({ projectId, onBack }) {
 
   function deleteSettingAttribute(index) {
     setSettingsAttributes((current) => current.filter((_, itemIndex) => itemIndex !== index));
+  }
+
+  function updateSettingMask(index, field, value) {
+    setSettingsMasks((current) => current.map((mask, itemIndex) => (
+      itemIndex === index ? { ...mask, [field]: value } : mask
+    )));
+  }
+
+  function addSettingMask() {
+    setSettingsMasks((current) => [...current, {
+      name: 'Mask',
+      directory: '/images/masks',
+      color: '#ff3b8f',
+      opacity: 0.55,
+    }]);
+  }
+
+  function deleteSettingMask(index) {
+    setSettingsMasks((current) => current.filter((_, itemIndex) => itemIndex !== index));
   }
 
   async function loadModelConfig(event) {
@@ -252,6 +360,7 @@ export default function Annotator({ projectId, onBack }) {
     try {
       const result = await api(`/projects/${project.id}/model/label-unannotated`, { method: 'POST' });
       setProject(result.project);
+      setMaskStatusLoaded(false);
       setSampleBox(null);
       setSampleResult(null);
       await loadModelStatus();
@@ -263,31 +372,179 @@ export default function Annotator({ projectId, onBack }) {
     }
   }
 
-  function updateAnnotatedFilter(value) {
+  function resetFilterView() {
     setIndex(0);
     setSampleBox(null);
     setSampleResult(null);
-    setFilters((current) => ({ ...current, annotated: value }));
-  }
-
-  function updateAttributeFilter(attribute, value) {
-    setIndex(0);
-    setSampleBox(null);
-    setSampleResult(null);
-    setFilters((current) => ({
-      ...current,
-      attributes: {
-        ...current.attributes,
-        [attribute]: value,
-      },
-    }));
   }
 
   function clearFilters() {
-    setIndex(0);
-    setSampleBox(null);
-    setSampleResult(null);
-    setFilters({ annotated: 'all', attributes: {} });
+    resetFilterView();
+    setFilters([]);
+  }
+
+  function filterValueOptions(target) {
+    if (target === 'annotated') {
+      return [
+        { value: 'true', label: 'True' },
+        { value: 'false', label: 'False' },
+      ];
+    }
+    if (target?.startsWith('mask:')) {
+      return [
+        { value: 'exists', label: 'Exist' },
+        { value: 'missing', label: 'Not exist' },
+      ];
+    }
+    return [
+      { value: '1', label: 'True' },
+      { value: '0', label: 'False' },
+      { value: '2', label: 'Unknown' },
+    ];
+  }
+
+  function defaultFilterValue(target) {
+    return filterValueOptions(target)[0].value;
+  }
+
+  function addFilterCondition() {
+    resetFilterView();
+    setFilters((current) => [...current, { target: 'annotated', operator: '==', value: 'true' }]);
+  }
+
+  function updateFilterCondition(index, patch) {
+    resetFilterView();
+    setFilters((current) => current.map((condition, itemIndex) => {
+      if (itemIndex !== index) return condition;
+      const next = { ...condition, ...patch };
+      if (patch.target) {
+        next.value = defaultFilterValue(patch.target);
+      }
+      return next;
+    }));
+  }
+
+  function deleteFilterCondition(index) {
+    resetFilterView();
+    setFilters((current) => current.filter((_, itemIndex) => itemIndex !== index));
+  }
+
+  function maskUrl(targetImage, maskName) {
+    const version = maskVersions[`${targetImage.id}:${maskName}`] || 0;
+    return `${API_URL}/projects/${project.id}/images/${targetImage.id}/masks/${encodeURIComponent(maskName)}?v=${version}`;
+  }
+
+  function toggleMask(maskName) {
+    setVisibleMasks((current) => ({ ...current, [maskName]: !current[maskName] }));
+  }
+
+  function startMaskEdit(maskName) {
+    setMaskError('');
+    setSamplerActive(false);
+    setEditingMask(maskName);
+    setVisibleMasks((current) => ({ ...current, [maskName]: true }));
+  }
+
+  function stopMaskEdit() {
+    setEditingMask('');
+    maskDrawingRef.current = false;
+  }
+
+  function drawMaskBrush(event) {
+    if (!editingMask || !maskCanvasRef.current) return;
+    const point = getImagePoint(event);
+    if (!point) return;
+    const canvas = maskCanvasRef.current;
+    const context = canvas.getContext('2d');
+    context.globalCompositeOperation = 'source-over';
+    context.fillStyle = editingMaskColor;
+    context.globalAlpha = 1;
+    context.beginPath();
+    context.arc(point.x, point.y, 14, 0, Math.PI * 2);
+    context.fill();
+  }
+
+  function startMaskBrush(event) {
+    if (!editingMask) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    maskDrawingRef.current = true;
+    drawMaskBrush(event);
+  }
+
+  function updateMaskBrush(event) {
+    if (!maskDrawingRef.current) return;
+    event.preventDefault();
+    drawMaskBrush(event);
+  }
+
+  function finishMaskBrush(event) {
+    if (!maskDrawingRef.current) return;
+    event.preventDefault();
+    maskDrawingRef.current = false;
+  }
+
+  function clearEditingMask() {
+    const canvas = maskCanvasRef.current;
+    if (!canvas) return;
+    canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+  }
+
+  async function saveEditingMask() {
+    if (!editingMask || !image || !maskCanvasRef.current || !imageRef.current) return;
+    setMaskBusy(true);
+    setMaskError('');
+    try {
+      const sourceCanvas = maskCanvasRef.current;
+      const outputCanvas = document.createElement('canvas');
+      outputCanvas.width = imageRef.current.naturalWidth;
+      outputCanvas.height = imageRef.current.naturalHeight;
+      const outputContext = outputCanvas.getContext('2d');
+      const rasterCanvas = document.createElement('canvas');
+      rasterCanvas.width = outputCanvas.width;
+      rasterCanvas.height = outputCanvas.height;
+      const rasterContext = rasterCanvas.getContext('2d');
+      rasterContext.drawImage(sourceCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
+      const imageData = rasterContext.getImageData(0, 0, outputCanvas.width, outputCanvas.height);
+      for (let offset = 0; offset < imageData.data.length; offset += 4) {
+        const isMask = imageData.data[offset + 3] > 0;
+        const value = isMask ? 255 : 0;
+        imageData.data[offset] = value;
+        imageData.data[offset + 1] = value;
+        imageData.data[offset + 2] = value;
+        imageData.data[offset + 3] = 255;
+      }
+      outputContext.putImageData(imageData, 0, 0);
+      const blob = await new Promise((resolve) => outputCanvas.toBlob(resolve, 'image/png'));
+      const formData = new FormData();
+      formData.append('file', blob, 'mask.png');
+      await api(`/projects/${project.id}/images/${image.id}/masks/${encodeURIComponent(editingMask)}`, {
+        method: 'PUT',
+        body: formData,
+      });
+      const versionKey = `${image.id}:${editingMask}`;
+      setMaskVersions((current) => ({ ...current, [versionKey]: (current[versionKey] || 0) + 1 }));
+      setVisibleMasks((current) => ({ ...current, [editingMask]: true }));
+      setProject((current) => ({
+        ...current,
+        images: current.images.map((item) => (
+          item.id === image.id
+            ? {
+                ...item,
+                mask_status: {
+                  ...(item.mask_status || {}),
+                  [editingMask]: true,
+                },
+              }
+            : item
+        )),
+      }));
+      stopMaskEdit();
+    } catch (err) {
+      setMaskError(err.message);
+    } finally {
+      setMaskBusy(false);
+    }
   }
 
   useEffect(() => {
@@ -297,6 +554,7 @@ export default function Annotator({ projectId, onBack }) {
       if (event.key.toLowerCase() === 'f') goNext();
       if (event.key.toLowerCase() === 'd') goPrev();
       if (event.key.toLowerCase() === 's') setSamplerActive((current) => !current);
+      if (event.key === 'Escape') stopMaskEdit();
     }
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
@@ -483,31 +741,52 @@ export default function Annotator({ projectId, onBack }) {
                   <strong>Filters</strong>
                   <button className="textButton" onClick={clearFilters} disabled={activeFilterCount === 0}>Clear</button>
                 </div>
-                <label>
-                  Annotated
-                  <select value={filters.annotated} onChange={(event) => updateAnnotatedFilter(event.target.value)}>
-                    <option value="all">All</option>
-                    <option value="annotated">Annotated</option>
-                    <option value="modelAnnotated">Model annotated</option>
-                    <option value="notAnnotated">Not annotated</option>
-                  </select>
-                </label>
-                <div className="filterAttributeList">
-                  {project.attributes.map((attribute) => (
-                    <label key={attribute}>
-                      {attribute}
-                      <select
-                        value={filters.attributes[attribute] || 'all'}
-                        onChange={(event) => updateAttributeFilter(attribute, event.target.value)}
-                      >
-                        <option value="all">All</option>
-                        <option value="1">True</option>
-                        <option value="0">False</option>
-                        <option value="2">Unknown</option>
-                      </select>
-                    </label>
-                  ))}
-                </div>
+                <button className="filterAddButton" onClick={addFilterCondition}>
+                  <Plus size={18} />Add
+                </button>
+                {maskStatusLoading && <span className="filterLoading">Checking mask files...</span>}
+                {filters.length > 0 && (
+                  <div className="filterConditionList">
+                    {filters.map((condition, conditionIndex) => (
+                      <div className="filterConditionRow" key={conditionIndex}>
+                        <select
+                          value={condition.target}
+                          onChange={(event) => updateFilterCondition(conditionIndex, { target: event.target.value })}
+                        >
+                          <option value="annotated">Annotated</option>
+                          {project.attributes.map((attribute) => (
+                            <option value={`attribute:${attribute}`} key={attribute}>{attribute}</option>
+                          ))}
+                          {(project.mask_labels || []).map((mask) => (
+                            <option value={`mask:${mask.name}`} key={mask.name}>Mask: {mask.name}</option>
+                          ))}
+                        </select>
+                        <select
+                          value={condition.operator}
+                          onChange={(event) => updateFilterCondition(conditionIndex, { operator: event.target.value })}
+                        >
+                          <option value="==">==</option>
+                          <option value="!=">!=</option>
+                        </select>
+                        <select
+                          value={condition.value}
+                          onChange={(event) => updateFilterCondition(conditionIndex, { value: event.target.value })}
+                        >
+                          {filterValueOptions(condition.target).map((option) => (
+                            <option value={option.value} key={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                        <button
+                          className="iconButton danger"
+                          title="Delete condition"
+                          onClick={() => deleteFilterCondition(conditionIndex)}
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -550,6 +829,52 @@ export default function Annotator({ projectId, onBack }) {
                         title="Delete attribute"
                         onClick={() => deleteSettingAttribute(attributeIndex)}
                         disabled={settingsAttributes.length <= 1}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <div className="settingsSectionHeader">
+                  <strong>Mask labels</strong>
+                  <button className="textButton" onClick={addSettingMask}>
+                    <Plus size={16} />Add
+                  </button>
+                </div>
+                <div className="settingsAttributeList">
+                  {settingsMasks.map((mask, maskIndex) => (
+                    <div className="maskSettingRow" key={`${maskIndex}-${mask.name}`}>
+                      <input
+                        value={mask.name}
+                        placeholder="Mask name"
+                        onChange={(event) => updateSettingMask(maskIndex, 'name', event.target.value)}
+                      />
+                      <input
+                        value={mask.directory}
+                        placeholder="Mask directory"
+                        onChange={(event) => updateSettingMask(maskIndex, 'directory', event.target.value)}
+                      />
+                      <input
+                        type="color"
+                        title="Mask color"
+                        value={mask.color || '#ff3b8f'}
+                        onChange={(event) => updateSettingMask(maskIndex, 'color', event.target.value)}
+                      />
+                      <label className="maskOpacityControl">
+                        <span>{Math.round(Number(mask.opacity ?? 0.55) * 100)}%</span>
+                        <input
+                          type="range"
+                          min="0.05"
+                          max="1"
+                          step="0.05"
+                          value={mask.opacity ?? 0.55}
+                          onChange={(event) => updateSettingMask(maskIndex, 'opacity', event.target.value)}
+                        />
+                      </label>
+                      <button
+                        className="iconButton danger"
+                        title="Delete mask label"
+                        onClick={() => deleteSettingMask(maskIndex)}
                       >
                         <Trash2 size={16} />
                       </button>
@@ -601,6 +926,33 @@ export default function Annotator({ projectId, onBack }) {
                     ))}
                   </fieldset>
                 ))}
+                {(project.mask_labels || []).length > 0 && (
+                  <fieldset className="maskGroup">
+                    <legend>Masks</legend>
+                    {project.mask_labels.map((mask) => (
+                      <div className={`maskRow ${editingMask === mask.name ? 'maskRowEditing' : ''}`} key={mask.name}>
+                        <span>{mask.name}</span>
+                        <button className="iconButton" title="Toggle mask" onClick={() => toggleMask(mask.name)}>
+                          {visibleMasks[mask.name] ? <Eye size={16} /> : <EyeOff size={16} />}
+                        </button>
+                        <button className="iconButton" title="Edit mask" onClick={() => startMaskEdit(mask.name)}>
+                          <Edit3 size={16} />
+                        </button>
+                      </div>
+                    ))}
+                    {editingMask && (
+                      <div className="maskEditActions">
+                        <span>Editing {editingMask}</span>
+                        <button className="secondary" onClick={clearEditingMask}>Clear</button>
+                        <button className="secondary" onClick={stopMaskEdit}><X size={16} />Cancel</button>
+                        <button className="primary" onClick={saveEditingMask} disabled={maskBusy}>
+                          <Save size={16} />{maskBusy ? 'Saving...' : 'Save'}
+                        </button>
+                      </div>
+                    )}
+                    {maskError && <span className="inlineError">{maskError}</span>}
+                  </fieldset>
+                )}
               </div>
               <div className="navButtons">
                 <button className="secondary" onClick={goPrev} disabled={index === 0}><ChevronLeft size={18} />Prev</button>
@@ -625,10 +977,13 @@ export default function Annotator({ projectId, onBack }) {
           {hasFilterResults ? (
             <div
               className={`imageSampleSurface ${samplerActive ? 'samplingEnabled' : ''}`}
-              onPointerDown={startSampling}
-              onPointerMove={updateSampling}
-              onPointerUp={finishSampling}
-              onPointerCancel={() => { dragStartRef.current = null; }}
+              onPointerDown={(event) => (editingMask ? startMaskBrush(event) : startSampling(event))}
+              onPointerMove={(event) => (editingMask ? updateMaskBrush(event) : updateSampling(event))}
+              onPointerUp={(event) => (editingMask ? finishMaskBrush(event) : finishSampling(event))}
+              onPointerCancel={() => {
+                dragStartRef.current = null;
+                maskDrawingRef.current = false;
+              }}
             >
               <img
                 ref={imageRef}
@@ -637,6 +992,26 @@ export default function Annotator({ projectId, onBack }) {
                 crossOrigin="anonymous"
                 draggable="false"
               />
+              {(project.mask_labels || []).map((mask) => (
+                visibleMasks[mask.name] && editingMask !== mask.name && (
+                  <div
+                    className="maskOverlay"
+                    key={`${mask.name}-${maskVersions[`${image.id}:${mask.name}`] || 0}`}
+                    style={{
+                      '--mask-color': mask.color || '#ff3b8f',
+                      '--mask-opacity': Number(mask.opacity ?? 0.55),
+                      '--mask-url': `url("${maskUrl(image, mask.name)}")`,
+                    }}
+                  />
+                )
+              ))}
+              {editingMask && (
+                <canvas
+                  ref={maskCanvasRef}
+                  className="maskEditCanvas"
+                  style={{ opacity: editingMaskOpacity }}
+                />
+              )}
               {sampleBox && (
                 <div
                   className="sampleBox"

@@ -25,7 +25,8 @@ from app.services.project_service import (
     prepare_imported_project,
     normalize_attribute_value,
     has_selected_attribute, validate_attribute_value,
-    project_file_from_meta
+    project_file_from_meta,
+    normalize_mask_labels, find_mask_label, mask_path_for_image
 )
 from app.services.model_service   import (
     require_model, predict_image_attributes
@@ -35,6 +36,21 @@ from app.config import (
 )
 
 router = APIRouter()
+
+
+def build_mask_status(project: dict[str, Any]) -> dict[str, dict[str, bool]]:
+    mask_labels = project.get("mask_labels", [])
+    return {
+        image["id"]: {
+            mask_label["name"]: mask_path_for_image(
+                image["path"],
+                mask_label,
+                project["image_directory"],
+            ).exists()
+            for mask_label in mask_labels
+        }
+        for image in project.get("images", [])
+    }
 
 @router.get("/projects")
 def list_projects() -> list[dict[str, Any]]:
@@ -64,7 +80,8 @@ def create_project(payload: ProjectCreate) -> dict[str, Any]:
         "id": project_id,
         "name": name,
         "attributes": attributes,
-        "image_directory": str(directory),
+        "mask_labels": normalize_mask_labels(payload.mask_labels),
+        "image_directory": directory,
         "images": [
             {
                 "id": str(uuid.uuid4()),
@@ -122,6 +139,12 @@ def get_project(project_id: str) -> dict[str, Any]:
     return project
 
 
+@router.get("/projects/{project_id}/mask-status")
+def get_project_mask_status(project_id: str) -> dict[str, dict[str, bool]]:
+    _, _, project = find_project(project_id)
+    return build_mask_status(project)
+
+
 @router.put("/projects/{project_id}/settings")
 def update_project_settings(project_id: str, payload: ProjectSettingsUpdate) -> dict[str, Any]:
     meta, _, project = find_project(project_id)
@@ -130,8 +153,9 @@ def update_project_settings(project_id: str, payload: ProjectSettingsUpdate) -> 
     if not attributes:
         raise HTTPException(status_code=400, detail="At least one attribute is required")
 
-    project["image_directory"] = str(directory)
+    project["image_directory"] = directory
     project["attributes"] = attributes
+    project["mask_labels"] = normalize_mask_labels(payload.mask_labels)
     for image in project["images"]:
         current_attributes = image.get("attributes", {})
         image["attributes"] = {
@@ -141,6 +165,44 @@ def update_project_settings(project_id: str, payload: ProjectSettingsUpdate) -> 
     project["updated_at"] = now_iso()
     save_project(project, meta)
     return project
+
+
+@router.get("/projects/{project_id}/images/{image_id}/masks/{mask_name}")
+def get_mask(project_id: str, image_id: str, mask_name: str) -> FileResponse:
+    _, _, project = find_project(project_id)
+    image = next((item for item in project["images"] if item["id"] == image_id), None)
+    if image is None:
+        raise HTTPException(status_code=404, detail="Image not found")
+    mask_label = find_mask_label(project, mask_name)
+    mask_path = mask_path_for_image(image["path"], mask_label, project["image_directory"])
+    if not mask_path.exists():
+        raise HTTPException(status_code=404, detail="Mask not found")
+    return FileResponse(mask_path, media_type="image/png", headers={"Cache-Control": "no-store"})
+
+
+@router.put("/projects/{project_id}/images/{image_id}/masks/{mask_name}")
+async def save_mask(project_id: str, image_id: str, mask_name: str, file: UploadFile = File(...)) -> dict[str, str]:
+    _, _, project = find_project(project_id)
+    image = next((item for item in project["images"] if item["id"] == image_id), None)
+    if image is None:
+        raise HTTPException(status_code=404, detail="Image not found")
+    mask_label = find_mask_label(project, mask_name)
+    mask_path = mask_path_for_image(image["path"], mask_label, project["image_directory"])
+
+    try:
+        from PIL import Image
+    except ImportError as exc:
+        raise HTTPException(status_code=500, detail="Pillow is required to save masks") from exc
+
+    try:
+        import io as image_io
+        with Image.open(image_io.BytesIO(await file.read())) as mask_image:
+            binary_mask = mask_image.convert("L").point(lambda value: 255 if value >= 128 else 0, mode="L")
+            binary_mask.save(mask_path, format="PNG")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid mask PNG: {exc}") from exc
+
+    return {"status": "ok", "path": str(mask_path)}
 
 
 @router.post("/projects/{project_id}/scan")

@@ -16,7 +16,6 @@ services:
       - type: bind
         source: ${IMAGE_ROOT:-./images}
         target: /images
-        read_only: true
         bind:
           create_host_path: true
     environment:

@@ -32,11 +32,30 @@ export function getAnnotationStatus(image) {
   return 'annotated';
 }
 
+function conditionValue(image, condition) {
+  if (condition.target === 'annotated') {
+    return image.annotated ? 'true' : 'false';
+  }
+  if (condition.target?.startsWith('attribute:')) {
+    const attribute = condition.target.slice('attribute:'.length);
+    return String(normalizeAttributeValue(image.attributes?.[attribute]));
+  }
+  if (condition.target?.startsWith('mask:')) {
+    const maskName = condition.target.slice('mask:'.length);
+    if (!image.mask_status || !(maskName in image.mask_status)) return undefined;
+    return image.mask_status?.[maskName] ? 'exists' : 'missing';
+  }
+  return '';
+}
+
 export function imageMatchesFilters(image, filters) {
-  if (filters.annotated !== 'all' && getAnnotationStatus(image) !== filters.annotated) return false;
-  return Object.entries(filters.attributes).every(([attribute, value]) => (
-    value === 'all' || normalizeAttributeValue(image.attributes?.[attribute]) === Number(value)
-  ));
+  return filters.every((condition) => {
+    if (!condition.target || !condition.operator) return true;
+    const actual = conditionValue(image, condition);
+    if (actual === undefined) return true;
+    const expected = String(condition.value);
+    return condition.operator === '!=' ? actual !== expected : actual === expected;
+  });
 }
 
 export function hasSelectedAttribute(image, attributes) {

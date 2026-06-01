@@ -1,6 +1,7 @@
 import re
 import json
 import uuid
+import glob
 import shutil
 from typing import Any
 from pathlib import Path
@@ -113,24 +114,172 @@ def resolve_image_path(path: str) -> Path:
         raise HTTPException(status_code=400, detail="Unsupported image type")
     return image_path
 
-def resolve_image_directory(raw_directory: str) -> Path:
+def has_glob_pattern(path: str) -> bool:
+    return any(character in path for character in "*?[")
+
+
+def resolve_directory_pattern(raw_directory: str, label: str) -> str:
     directory = Path(raw_directory)
     if not directory.is_absolute():
         directory = IMAGE_ROOT / directory
-    directory = directory.resolve()
+    directory_text = str(directory)
+    parts = directory.parts
+    first_glob_part = next(
+        (index for index, part in enumerate(parts) if has_glob_pattern(part)),
+        len(parts),
+    )
+    fixed_prefix = Path(*parts[:first_glob_part]) if first_glob_part else Path(directory.anchor)
+    fixed_prefix = fixed_prefix.resolve()
+    try:
+        fixed_prefix.relative_to(IMAGE_ROOT)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{label} directory must be inside mounted image root: {IMAGE_ROOT}",
+        ) from exc
+
+    if not has_glob_pattern(directory_text):
+        resolved = directory.resolve()
+        try:
+            resolved.relative_to(IMAGE_ROOT)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{label} directory must be inside mounted image root: {IMAGE_ROOT}",
+            ) from exc
+        if label == "Image" and (not resolved.exists() or not resolved.is_dir()):
+            raise HTTPException(status_code=400, detail=f"Image directory not found: {resolved}")
+        return str(resolved)
+
+    return directory_text
+
+
+def resolve_image_directory(raw_directory: str) -> str:
+    return resolve_directory_pattern(raw_directory, "Image")
+
+
+def resolve_mask_directory(raw_directory: str) -> str:
+    directory_text = resolve_directory_pattern(raw_directory, "Mask")
+    if has_glob_pattern(directory_text):
+        return directory_text
+    directory = Path(directory_text)
+    directory.mkdir(parents=True, exist_ok=True)
+    return str(directory)
+
+
+def expand_directory_pattern(directory_pattern: str) -> list[Path]:
+    if has_glob_pattern(directory_pattern):
+        directories = [
+            Path(match).resolve()
+            for match in glob.glob(directory_pattern)
+            if Path(match).is_dir()
+        ]
+    else:
+        directory = Path(directory_pattern).resolve()
+        directories = [directory] if directory.is_dir() else []
+
+    unique_directories = []
+    seen = set()
+    for directory in directories:
+        try:
+            directory.relative_to(IMAGE_ROOT)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Matched directory is outside mounted image root: {directory}",
+            ) from exc
+        key = str(directory)
+        if key not in seen:
+            seen.add(key)
+            unique_directories.append(directory)
+    return sorted(unique_directories, key=str)
+
+
+def normalize_mask_labels(raw_labels: Any) -> list[dict[str, Any]]:
+    if not raw_labels:
+        return []
+    labels = []
+    seen_names: set[str] = set()
+    for raw_label in raw_labels:
+        if hasattr(raw_label, "model_dump"):
+            raw_label = raw_label.model_dump()
+        if not isinstance(raw_label, dict):
+            continue
+        name = str(raw_label.get("name", "")).strip()
+        directory = str(raw_label.get("directory", "")).strip()
+        color = str(raw_label.get("color", "#ff3b8f")).strip()
+        opacity = raw_label.get("opacity", 0.55)
+        if not name or not directory or name in seen_names:
+            continue
+        if not re.fullmatch(r"#[0-9A-Fa-f]{6}", color):
+            color = "#ff3b8f"
+        try:
+            opacity = max(0.05, min(float(opacity), 1.0))
+        except (TypeError, ValueError):
+            opacity = 0.55
+        seen_names.add(name)
+        labels.append({
+            "name": name,
+            "directory": resolve_mask_directory(directory),
+            "color": color,
+            "opacity": opacity,
+        })
+    return labels
+
+
+def find_mask_label(project: dict[str, Any], mask_name: str) -> dict[str, str]:
+    label = next((item for item in project.get("mask_labels", []) if item["name"] == mask_name), None)
+    if label is None:
+        raise HTTPException(status_code=404, detail="Mask label not found")
+    return label
+
+
+def wildcard_regex_from_pattern(directory_pattern: str) -> re.Pattern[str]:
+    escaped = ""
+    wildcard_index = 0
+    for character in directory_pattern:
+        if character == "*":
+            escaped += f"(?P<wildcard_{wildcard_index}>[^/\\\\]+)"
+            wildcard_index += 1
+        else:
+            escaped += re.escape(character)
+    return re.compile(f"^{escaped}$", re.IGNORECASE)
+
+
+def apply_wildcards_to_pattern(directory_pattern: str, wildcards: dict[str, str]) -> str:
+    if directory_pattern.count("*") != len(wildcards):
+        return directory_pattern.replace("*", "_")
+    output = directory_pattern
+    for index in range(len(wildcards)):
+        output = output.replace("*", wildcards[f"wildcard_{index}"], 1)
+    return output
+
+
+def mask_directory_for_image(image_path: str, image_directory_pattern: str, mask_directory_pattern: str) -> Path:
+    if has_glob_pattern(mask_directory_pattern):
+        if has_glob_pattern(image_directory_pattern):
+            image_parent = str(Path(image_path).parent)
+            match = wildcard_regex_from_pattern(image_directory_pattern).match(image_parent)
+            if match:
+                directory = Path(apply_wildcards_to_pattern(mask_directory_pattern, match.groupdict())).resolve()
+            else:
+                directory = Path(mask_directory_pattern.replace("*", "_")).resolve()
+        else:
+            directory = Path(mask_directory_pattern.replace("*", "_")).resolve()
+    else:
+        directory = Path(mask_directory_pattern).resolve()
 
     try:
         directory.relative_to(IMAGE_ROOT)
     except ValueError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Image directory must be inside mounted image root: {IMAGE_ROOT}",
-        ) from exc
-
-    if not directory.exists() or not directory.is_dir():
-        raise HTTPException(status_code=400, detail=f"Image directory not found: {directory}")
-
+        raise HTTPException(status_code=400, detail=f"Mask directory is outside mounted image root: {directory}") from exc
+    directory.mkdir(parents=True, exist_ok=True)
     return directory
+
+
+def mask_path_for_image(image_path: str, mask_label: dict[str, str], image_directory_pattern: str) -> Path:
+    image_name = Path(image_path).stem
+    return mask_directory_for_image(image_path, image_directory_pattern, mask_label["directory"]) / f"{image_name}.png"
 
 
 def find_project(project_id: str) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
@@ -194,6 +343,7 @@ def prepare_imported_project(raw_project: Any, meta: list[dict[str, Any]]) -> di
         "id": project_id,
         "name": name,
         "attributes": attributes,
+        "mask_labels": normalize_mask_labels(raw_project.get("mask_labels", [])),
         "image_directory": str(raw_project.get("image_directory", "")),
         "images": imported_images,
         "created_at": str(raw_project.get("created_at") or timestamp),
@@ -201,9 +351,13 @@ def prepare_imported_project(raw_project: Any, meta: list[dict[str, Any]]) -> di
     }
 
 
-def scan_image_paths(directory: Path) -> list[str]:
+def scan_image_paths(directory_pattern: str) -> list[str]:
+    directories = expand_directory_pattern(directory_pattern)
+    if not directories:
+        raise HTTPException(status_code=400, detail=f"No directories matched: {directory_pattern}")
     return sorted(
         str(path)
+        for directory in directories
         for path in directory.rglob("*")
         if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS
     )
