@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { FileUp, FolderOpen, Plus, Trash2 } from 'lucide-react';
-import { api } from '../api/client';
+import { Download, FileUp, FolderOpen, Plus, Trash2 } from 'lucide-react';
+import { API_URL, api } from '../api/client';
 import { DEFAULT_ATTRIBUTES } from '../constants/attributes';
 
 export default function ProjectHome({ onOpenProject }) {
@@ -33,6 +33,7 @@ export default function ProjectHome({ onOpenProject }) {
             <p>{projects.length} projects</p>
           </div>
           <div className="topbarActions">
+            <ExportProjects projects={projects} />
             <ImportProject onImported={loadProjects} />
             <CreateProject onCreated={loadProjects} />
           </div>
@@ -64,6 +65,106 @@ export default function ProjectHome({ onOpenProject }) {
         )}
       </section>
     </main>
+  );
+}
+
+function ExportProjects({ projects }) {
+  const [open, setOpen] = useState(false);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  function openExport() {
+    setSelectedIds(projects.map((project) => project.id));
+    setError('');
+    setOpen(true);
+  }
+
+  function toggleProject(projectId) {
+    setSelectedIds((current) => (
+      current.includes(projectId)
+        ? current.filter((id) => id !== projectId)
+        : [...current, projectId]
+    ));
+  }
+
+  async function exportSelected() {
+    if (selectedIds.length === 0) {
+      setError('Select at least one project');
+      return;
+    }
+
+    setBusy(true);
+    setError('');
+    try {
+      const response = await fetch(`${API_URL}/projects/export`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_ids: selectedIds }),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.detail || 'Export failed');
+      }
+
+      const blob = await response.blob();
+      const disposition = response.headers.get('Content-Disposition') || '';
+      const encodedFilenameMatch = disposition.match(/filename\*=utf-8''([^;]+)/i);
+      const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
+      const filename = encodedFilenameMatch
+        ? decodeURIComponent(encodedFilenameMatch[1])
+        : filenameMatch?.[1] || 'ExportData.zip';
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setOpen(false);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <button className="secondary" onClick={openExport} disabled={projects.length === 0}>
+        <Download size={18} />Export
+      </button>
+      {open && (
+        <div className="modalBackdrop" onMouseDown={() => setOpen(false)}>
+          <div className="modal" onMouseDown={(event) => event.stopPropagation()}>
+            <h2>Export projects</h2>
+            <div className="exportProjectList">
+              {projects.map((project) => (
+                <label className="exportProjectOption" key={project.id}>
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.includes(project.id)}
+                    onChange={() => toggleProject(project.id)}
+                  />
+                  <span>
+                    <strong>{project.name}</strong>
+                    <small>{project.image_count} images</small>
+                  </span>
+                </label>
+              ))}
+            </div>
+            {error && <div className="alert">{error}</div>}
+            <div className="actions">
+              <button type="button" className="secondary" onClick={() => setOpen(false)}>Cancel</button>
+              <button className="primary" onClick={exportSelected} disabled={busy || selectedIds.length === 0}>
+                <Download size={18} />{busy ? 'Exporting...' : 'Export zip'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 

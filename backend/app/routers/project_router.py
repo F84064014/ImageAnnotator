@@ -10,12 +10,13 @@ from fastapi import (
 from fastapi.responses import (
     FileResponse, StreamingResponse
 )
+from starlette.background import BackgroundTask
 from app.schemas import (
-    AnnotationUpdate, ProjectCreate, ProjectSettingsUpdate
+    AnnotationUpdate, ProjectCreate, ProjectExportRequest, ProjectSettingsUpdate
 )
 from app.utils import now_iso
 from app.services.project_service import (
-    load_project, load_project_meta,
+    load_project_meta,
     save_project, save_project_meta,
     resolve_image_directory, resolve_image_path,
     scan_image_paths,
@@ -28,6 +29,9 @@ from app.services.project_service import (
     project_file_from_meta,
     normalize_mask_labels, find_mask_label, mask_path_for_image
 )
+from app.services.export_service import (
+    build_mask_status, cleanup_export, create_projects_export
+)
 from app.services.model_service   import (
     require_model, predict_image_attributes
 )
@@ -37,20 +41,6 @@ from app.config import (
 
 router = APIRouter()
 
-
-def build_mask_status(project: dict[str, Any]) -> dict[str, dict[str, bool]]:
-    mask_labels = project.get("mask_labels", [])
-    return {
-        image["id"]: {
-            mask_label["name"]: mask_path_for_image(
-                image["path"],
-                mask_label,
-                project["image_directory"],
-            ).exists()
-            for mask_label in mask_labels
-        }
-        for image in project.get("images", [])
-    }
 
 @router.get("/projects")
 def list_projects() -> list[dict[str, Any]]:
@@ -119,6 +109,17 @@ async def import_project(file: UploadFile = File(...)) -> dict[str, Any]:
     meta.append({**summary, "file": filename})
     save_project_meta(meta)
     return summary
+
+
+@router.post("/projects/export")
+def export_projects(payload: ProjectExportRequest) -> FileResponse:
+    temp_zip_path, filename = create_projects_export(payload.project_ids)
+    return FileResponse(
+        temp_zip_path,
+        media_type="application/zip",
+        filename=filename,
+        background=BackgroundTask(cleanup_export, str(temp_zip_path)),
+    )
 
 
 @router.delete("/projects/{project_id}", status_code=204)

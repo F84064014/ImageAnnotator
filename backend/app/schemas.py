@@ -25,6 +25,10 @@ class ProjectSettingsUpdate(BaseModel):
     mask_labels: list[MaskLabel] = Field(default_factory=list)
 
 
+class ProjectExportRequest(BaseModel):
+    project_ids: list[str] = Field(min_length=1)
+
+
 class ModelConfig(BaseModel):
     model_path: str
     input_size: tuple[int, int]
