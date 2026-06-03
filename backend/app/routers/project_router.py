@@ -27,7 +27,8 @@ from app.services.project_service import (
     normalize_attribute_value,
     has_selected_attribute, validate_attribute_value,
     project_file_from_meta,
-    normalize_mask_labels, find_mask_label, mask_path_for_image
+    normalize_mask_labels, find_mask_label, mask_path_for_image,
+    import_data_directory
 )
 from app.services.export_service import (
     build_mask_status, cleanup_export, create_projects_export
@@ -109,6 +110,11 @@ async def import_project(file: UploadFile = File(...)) -> dict[str, Any]:
     meta.append({**summary, "file": filename})
     save_project_meta(meta)
     return summary
+
+
+@router.post("/projects/import-data", status_code=201)
+async def import_data(files: list[UploadFile] = File(...)) -> dict[str, Any]:
+    return await import_data_directory(files)
 
 
 @router.post("/projects/export")

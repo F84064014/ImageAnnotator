@@ -4,8 +4,8 @@ import uuid
 import glob
 import shutil
 from typing import Any
-from pathlib import Path
-from fastapi import HTTPException
+from pathlib import Path, PurePosixPath
+from fastapi import HTTPException, UploadFile
 
 from app.utils import (
     now_iso
@@ -74,6 +74,51 @@ def unique_project_filename(name: str, taken: set[str]) -> str:
         filename = f"{stem}_{index}.json"
         index += 1
     return filename
+
+def unique_import_data_directory(name: str) -> Path:
+    stem = safe_project_stem(name)
+    target = IMAGE_ROOT / stem
+    index = 2
+    while target.exists():
+        target = IMAGE_ROOT / f"{stem}_{index}"
+        index += 1
+    return target
+
+def uploaded_relative_parts(filename: str) -> tuple[str, ...]:
+    parts = PurePosixPath(filename.replace("\\", "/")).parts
+    if not parts or any(part in {"", ".", ".."} for part in parts):
+        raise HTTPException(status_code=400, detail=f"Invalid uploaded path: {filename}")
+    return tuple(parts)
+
+async def import_data_directory(files: list[UploadFile]) -> dict[str, Any]:
+    if not files:
+        raise HTTPException(status_code=400, detail="Please select a data directory")
+
+    uploaded_paths = [(file, uploaded_relative_parts(file.filename or "")) for file in files]
+    root_names = {parts[0] for _, parts in uploaded_paths}
+    if len(root_names) != 1:
+        raise HTTPException(status_code=400, detail="Please import one directory at a time")
+
+    target_directory = unique_import_data_directory(next(iter(root_names)))
+    file_count = 0
+    for upload, parts in uploaded_paths:
+        relative_parts = parts[1:] or parts
+        target_path = (target_directory / Path(*relative_parts)).resolve()
+        try:
+            target_path.relative_to(target_directory.resolve())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid uploaded path: {upload.filename}") from exc
+
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        with target_path.open("wb") as output:
+            while chunk := await upload.read(1024 * 1024):
+                output.write(chunk)
+        file_count += 1
+
+    return {
+        "directory": str(target_directory),
+        "file_count": file_count,
+    }
 
 def migrate_legacy_projects() -> None:
     projects = json.loads(LEGACY_PROJECTS_FILE.read_text(encoding="utf-8"))

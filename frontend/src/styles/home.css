@@ -102,6 +102,55 @@
   margin-top: 3px;
 }
 
+.importModal {
+  width: min(560px, 100%);
+}
+
+.importChoiceGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.importChoice {
+  min-height: 104px;
+  border: 1px solid #dfe4de;
+  border-radius: 8px;
+  background: #fff;
+  color: #17201b;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  text-align: left;
+}
+
+.importChoice:hover {
+  border-color: #1d6b4f;
+  background: #f6fbf8;
+}
+
+.importChoice span,
+.importChoice strong,
+.importChoice small {
+  min-width: 0;
+  display: block;
+}
+
+.importChoice small {
+  color: #66736c;
+  margin-top: 4px;
+}
+
+.successNote {
+  border: 1px solid #b9d8c5;
+  border-radius: 8px;
+  color: #1d6b4f;
+  background: #f1faf5;
+  padding: 12px 14px;
+}
+
 .empty,
 .alert {
   min-height: 160px;
@@ -181,5 +230,11 @@ textarea:focus {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+}
+
+@media (max-width: 640px) {
+  .importChoiceGrid {
+    grid-template-columns: 1fr;
+  }
 }
 

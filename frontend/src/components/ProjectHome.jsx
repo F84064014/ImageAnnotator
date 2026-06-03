@@ -169,16 +169,20 @@ function ExportProjects({ projects }) {
 }
 
 function ImportProject({ onImported }) {
-  const fileInputRef = useRef(null);
+  const jsonInputRef = useRef(null);
+  const dataInputRef = useRef(null);
+  const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
 
-  async function importFile(event) {
+  async function importJson(event) {
     const file = event.target.files?.[0];
     if (!file) return;
 
     setBusy(true);
     setError('');
+    setMessage('');
     try {
       const formData = new FormData();
       formData.append('file', file);
@@ -186,6 +190,7 @@ function ImportProject({ onImported }) {
         method: 'POST',
         body: formData,
       });
+      setOpen(false);
       await onImported();
     } catch (err) {
       setError(err.message);
@@ -195,20 +200,81 @@ function ImportProject({ onImported }) {
     }
   }
 
+  async function importData(event) {
+    const files = Array.from(event.target.files || []);
+    if (files.length === 0) return;
+
+    setBusy(true);
+    setError('');
+    setMessage('');
+    try {
+      const formData = new FormData();
+      files.forEach((file) => {
+        formData.append('files', file, file.webkitRelativePath || file.name);
+      });
+      const result = await api('/projects/import-data', {
+        method: 'POST',
+        body: formData,
+      });
+      setMessage(`Copied ${result.file_count} files to ${result.directory}`);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+      event.target.value = '';
+    }
+  }
+
   return (
-    <div className="importProject">
+    <>
       <input
-        ref={fileInputRef}
+        ref={jsonInputRef}
         type="file"
         accept="application/json,.json"
-        onChange={importFile}
+        onChange={importJson}
         hidden
       />
-      <button className="secondary" onClick={() => fileInputRef.current?.click()} disabled={busy}>
-        <FileUp size={18} />{busy ? 'Importing...' : 'Import JSON'}
+      <input
+        ref={dataInputRef}
+        type="file"
+        multiple
+        webkitdirectory="true"
+        directory="true"
+        onChange={importData}
+        hidden
+      />
+      <button className="secondary" onClick={() => { setError(''); setMessage(''); setOpen(true); }} disabled={busy}>
+        <FileUp size={18} />{busy ? 'Importing...' : 'Import'}
       </button>
-      {error && <span className="inlineError">{error}</span>}
-    </div>
+      {open && (
+        <div className="modalBackdrop" onMouseDown={() => setOpen(false)}>
+          <div className="modal importModal" onMouseDown={(event) => event.stopPropagation()}>
+            <h2>Import</h2>
+            <div className="importChoiceGrid">
+              <button className="importChoice" onClick={() => dataInputRef.current?.click()} disabled={busy}>
+                <FolderOpen size={22} />
+                <span>
+                  <strong>Data</strong>
+                  <small>Copy a directory into /images</small>
+                </span>
+              </button>
+              <button className="importChoice" onClick={() => jsonInputRef.current?.click()} disabled={busy}>
+                <FileUp size={22} />
+                <span>
+                  <strong>JSON</strong>
+                  <small>Import a project JSON file</small>
+                </span>
+              </button>
+            </div>
+            {message && <div className="successNote">{message}</div>}
+            {error && <div className="alert">{error}</div>}
+            <div className="actions">
+              <button type="button" className="secondary" onClick={() => setOpen(false)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
