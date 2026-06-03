@@ -456,6 +456,59 @@
   margin-right: auto;
 }
 
+.maskToolToggle {
+  border: 1px solid #d2dcd5;
+  border-radius: 8px;
+  display: inline-flex;
+  overflow: hidden;
+  background: #fff;
+}
+
+.maskToolToggle button {
+  min-height: 34px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #394740;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.maskToolToggle button + button {
+  border-left: 1px solid #d2dcd5;
+}
+
+.maskToolToggle button.active {
+  background: #1d6b4f;
+  color: #fff;
+}
+
+.annotationPanel .gotoIndexControl {
+  min-height: 38px;
+  border: 1px solid #d8ddd7;
+  border-radius: 7px;
+  background: #fff;
+  color: #394740;
+  display: inline-grid;
+  grid-template-columns: auto 64px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 0 12px;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.annotationPanel .gotoIndexControl input {
+  width: 64px;
+  min-height: 28px;
+  padding: 4px 6px;
+  text-align: center;
+}
+
 .attributeGroup legend {
   color: #394740;
   font-size: 13px;
@@ -554,7 +607,7 @@
 }
 
 .imageSampleSurface:has(.maskEditCanvas) {
-  cursor: crosshair;
+  cursor: none;
 }
 
 .imageStage img {
@@ -593,6 +646,27 @@
 
 .maskEditCanvas {
   pointer-events: none;
+}
+
+.maskBrushCursor {
+  position: absolute;
+  left: var(--cursor-x);
+  top: var(--cursor-y);
+  width: var(--cursor-size);
+  height: var(--cursor-size);
+  border: 2px solid var(--cursor-color, #ff3b8f);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.9), 0 2px 10px rgba(12, 18, 14, 0.24);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 5;
+}
+
+.maskBrushCursorErase {
+  border-color: #fff;
+  border-style: dashed;
+  background: rgba(0, 0, 0, 0.18);
+  box-shadow: 0 0 0 1px rgba(18, 24, 20, 0.75), 0 2px 10px rgba(12, 18, 14, 0.24);
 }
 
 .imageStageResized img {

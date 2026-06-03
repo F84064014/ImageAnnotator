@@ -1,5 +1,5 @@
 ﻿import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, BarChart3, ChevronLeft, ChevronRight, Cpu, Download, Edit3, Eye, EyeOff, Filter, Minimize2, Pipette, Plus, RefreshCw, Save, Settings, Trash2, X } from 'lucide-react';
+import { ArrowLeft, BarChart3, Brush, ChevronLeft, ChevronRight, Cpu, Download, Edit3, Eraser, Eye, EyeOff, Filter, Minimize2, Pipette, Plus, RefreshCw, Save, Settings, Trash2, X } from 'lucide-react';
 import { API_URL, api } from '../api/client';
 import TriStateAttribute from './TriStateAttribute';
 import { classifyColor, rgbToHsv } from '../utils/colorClassifier';
@@ -36,6 +36,8 @@ export default function Annotator({ projectId, onBack }) {
   const [settingsMasks, setSettingsMasks] = useState([]);
   const [visibleMasks, setVisibleMasks] = useState({});
   const [editingMask, setEditingMask] = useState('');
+  const [maskTool, setMaskTool] = useState('brush');
+  const [maskCursor, setMaskCursor] = useState(null);
   const [maskVersions, setMaskVersions] = useState({});
   const [maskStatusLoaded, setMaskStatusLoaded] = useState(false);
   const [maskStatusLoading, setMaskStatusLoading] = useState(false);
@@ -378,6 +380,15 @@ export default function Annotator({ projectId, onBack }) {
     setSampleResult(null);
   }
 
+  function goToIndex(value) {
+    const nextIndex = Number.parseInt(value, 10);
+    if (!Number.isFinite(nextIndex)) return;
+    const clampedIndex = Math.min(Math.max(nextIndex, 1), filteredImages.length) - 1;
+    setIndex(clampedIndex);
+    setSampleBox(null);
+    setSampleResult(null);
+  }
+
   function clearFilters() {
     resetFilterView();
     setFilters([]);
@@ -441,13 +452,22 @@ export default function Annotator({ projectId, onBack }) {
   function startMaskEdit(maskName) {
     setMaskError('');
     setSamplerActive(false);
+    setMaskTool('brush');
     setEditingMask(maskName);
     setVisibleMasks((current) => ({ ...current, [maskName]: true }));
   }
 
   function stopMaskEdit() {
     setEditingMask('');
+    setMaskTool('brush');
+    setMaskCursor(null);
     maskDrawingRef.current = false;
+  }
+
+  function updateMaskCursor(event) {
+    if (!editingMask) return;
+    const point = getImagePoint(event);
+    setMaskCursor(point);
   }
 
   function drawMaskBrush(event) {
@@ -456,12 +476,13 @@ export default function Annotator({ projectId, onBack }) {
     if (!point) return;
     const canvas = maskCanvasRef.current;
     const context = canvas.getContext('2d');
-    context.globalCompositeOperation = 'source-over';
-    context.fillStyle = editingMaskColor;
+    context.globalCompositeOperation = maskTool === 'erase' ? 'destination-out' : 'source-over';
+    context.fillStyle = maskTool === 'erase' ? 'rgba(0, 0, 0, 1)' : editingMaskColor;
     context.globalAlpha = 1;
     context.beginPath();
     context.arc(point.x, point.y, 14, 0, Math.PI * 2);
     context.fill();
+    context.globalCompositeOperation = 'source-over';
   }
 
   function startMaskBrush(event) {
@@ -469,10 +490,12 @@ export default function Annotator({ projectId, onBack }) {
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     maskDrawingRef.current = true;
+    updateMaskCursor(event);
     drawMaskBrush(event);
   }
 
   function updateMaskBrush(event) {
+    updateMaskCursor(event);
     if (!maskDrawingRef.current) return;
     event.preventDefault();
     drawMaskBrush(event);
@@ -943,6 +966,22 @@ export default function Annotator({ projectId, onBack }) {
                     {editingMask && (
                       <div className="maskEditActions">
                         <span>Editing {editingMask}</span>
+                        <div className="maskToolToggle" role="group" aria-label="Mask edit tool">
+                          <button
+                            className={maskTool === 'brush' ? 'active' : ''}
+                            title="Brush"
+                            onClick={() => setMaskTool('brush')}
+                          >
+                            <Brush size={16} />Brush
+                          </button>
+                          <button
+                            className={maskTool === 'erase' ? 'active' : ''}
+                            title="Erase"
+                            onClick={() => setMaskTool('erase')}
+                          >
+                            <Eraser size={16} />Erase
+                          </button>
+                        </div>
                         <button className="secondary" onClick={clearEditingMask}>Clear</button>
                         <button className="secondary" onClick={stopMaskEdit}><X size={16} />Cancel</button>
                         <button className="primary" onClick={saveEditingMask} disabled={maskBusy}>
@@ -956,6 +995,17 @@ export default function Annotator({ projectId, onBack }) {
               </div>
               <div className="navButtons">
                 <button className="secondary" onClick={goPrev} disabled={index === 0}><ChevronLeft size={18} />Prev</button>
+                <label className="gotoIndexControl">
+                  <span>Go to</span>
+                  <input
+                    type="number"
+                    min="1"
+                    max={filteredImages.length}
+                    value={hasFilterResults ? index + 1 : ''}
+                    onChange={(event) => goToIndex(event.target.value)}
+                    disabled={!hasFilterResults}
+                  />
+                </label>
                 <button
                   className={`secondary ${samplerActive ? 'activeTool' : ''}`}
                   onClick={() => setSamplerActive((current) => !current)}
@@ -983,6 +1033,10 @@ export default function Annotator({ projectId, onBack }) {
               onPointerCancel={() => {
                 dragStartRef.current = null;
                 maskDrawingRef.current = false;
+                setMaskCursor(null);
+              }}
+              onPointerLeave={() => {
+                if (editingMask) setMaskCursor(null);
               }}
             >
               <img
@@ -1010,6 +1064,17 @@ export default function Annotator({ projectId, onBack }) {
                   ref={maskCanvasRef}
                   className="maskEditCanvas"
                   style={{ opacity: editingMaskOpacity }}
+                />
+              )}
+              {editingMask && maskCursor && (
+                <div
+                  className={`maskBrushCursor ${maskTool === 'erase' ? 'maskBrushCursorErase' : ''}`}
+                  style={{
+                    '--cursor-x': `${maskCursor.x}px`,
+                    '--cursor-y': `${maskCursor.y}px`,
+                    '--cursor-size': '28px',
+                    '--cursor-color': editingMaskColor,
+                  }}
                 />
               )}
               {sampleBox && (
