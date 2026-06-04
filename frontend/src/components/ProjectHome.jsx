@@ -73,11 +73,32 @@ function ExportProjects({ projects }) {
   const [selectedIds, setSelectedIds] = useState([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [exportJob, setExportJob] = useState(null);
 
   function openExport() {
     setSelectedIds(projects.map((project) => project.id));
     setError('');
+    setExportJob(null);
     setOpen(true);
+  }
+
+  function downloadBlob(response, fallbackName) {
+    return response.blob().then((blob) => {
+      const disposition = response.headers.get('Content-Disposition') || '';
+      const encodedFilenameMatch = disposition.match(/filename\*=utf-8''([^;]+)/i);
+      const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
+      const filename = encodedFilenameMatch
+        ? decodeURIComponent(encodedFilenameMatch[1])
+        : filenameMatch?.[1] || fallbackName;
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    });
   }
 
   function toggleProject(projectId) {
@@ -96,8 +117,9 @@ function ExportProjects({ projects }) {
 
     setBusy(true);
     setError('');
+    setExportJob({ status: 'queued', progress: 0, completed: 0, total: 0 });
     try {
-      const response = await fetch(`${API_URL}/projects/export`, {
+      const response = await fetch(`${API_URL}/projects/export-jobs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ project_ids: selectedIds }),
@@ -106,22 +128,30 @@ function ExportProjects({ projects }) {
         const data = await response.json().catch(() => ({}));
         throw new Error(data.detail || 'Export failed');
       }
+      let job = await response.json();
+      setExportJob(job);
 
-      const blob = await response.blob();
-      const disposition = response.headers.get('Content-Disposition') || '';
-      const encodedFilenameMatch = disposition.match(/filename\*=utf-8''([^;]+)/i);
-      const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
-      const filename = encodedFilenameMatch
-        ? decodeURIComponent(encodedFilenameMatch[1])
-        : filenameMatch?.[1] || 'ExportData.zip';
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
+      while (!['complete', 'error'].includes(job.status)) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        const statusResponse = await fetch(`${API_URL}/projects/export-jobs/${job.id}`);
+        if (!statusResponse.ok) {
+          const data = await statusResponse.json().catch(() => ({}));
+          throw new Error(data.detail || 'Export status failed');
+        }
+        job = await statusResponse.json();
+        setExportJob(job);
+      }
+
+      if (job.status === 'error') {
+        throw new Error(job.error || 'Export failed');
+      }
+
+      const downloadResponse = await fetch(`${API_URL}/projects/export-jobs/${job.id}/download`);
+      if (!downloadResponse.ok) {
+        const data = await downloadResponse.json().catch(() => ({}));
+        throw new Error(data.detail || 'Download failed');
+      }
+      await downloadBlob(downloadResponse, job.filename || 'ExportData.zip');
       setOpen(false);
     } catch (err) {
       setError(err.message);
@@ -154,9 +184,25 @@ function ExportProjects({ projects }) {
                 </label>
               ))}
             </div>
+            {exportJob && (
+              <div className="exportProgress">
+                <div className="exportProgressHeader">
+                  <span>{exportJob.status === 'complete' ? 'Ready' : 'Exporting'}</span>
+                  <strong>{Math.round(exportJob.progress || 0)}%</strong>
+                </div>
+                <div className="exportProgressTrack">
+                  <div style={{ width: `${Math.max(0, Math.min(exportJob.progress || 0, 100))}%` }} />
+                </div>
+                <small>
+                  {exportJob.total
+                    ? `${exportJob.completed}/${exportJob.total} images`
+                    : 'Preparing export...'}
+                </small>
+              </div>
+            )}
             {error && <div className="alert">{error}</div>}
             <div className="actions">
-              <button type="button" className="secondary" onClick={() => setOpen(false)}>Cancel</button>
+              <button type="button" className="secondary" onClick={() => setOpen(false)} disabled={busy}>Cancel</button>
               <button className="primary" onClick={exportSelected} disabled={busy || selectedIds.length === 0}>
                 <Download size={18} />{busy ? 'Exporting...' : 'Export zip'}
               </button>

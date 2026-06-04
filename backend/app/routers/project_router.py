@@ -31,7 +31,8 @@ from app.services.project_service import (
     import_data_directory
 )
 from app.services.export_service import (
-    build_mask_status, cleanup_export, create_projects_export
+    build_mask_status, cleanup_export, cleanup_export_job, create_projects_export,
+    export_job_snapshot, get_completed_export_job, start_projects_export_job
 )
 from app.services.model_service   import (
     require_model, predict_image_attributes
@@ -125,6 +126,27 @@ def export_projects(payload: ProjectExportRequest) -> FileResponse:
         media_type="application/zip",
         filename=filename,
         background=BackgroundTask(cleanup_export, str(temp_zip_path)),
+    )
+
+
+@router.post("/projects/export-jobs", status_code=202)
+def start_export_job(payload: ProjectExportRequest) -> dict[str, Any]:
+    return start_projects_export_job(payload.project_ids)
+
+
+@router.get("/projects/export-jobs/{job_id}")
+def get_export_job(job_id: str) -> dict[str, Any]:
+    return export_job_snapshot(job_id)
+
+
+@router.get("/projects/export-jobs/{job_id}/download")
+def download_export_job(job_id: str) -> FileResponse:
+    job = get_completed_export_job(job_id)
+    return FileResponse(
+        job["path"],
+        media_type="application/zip",
+        filename=job["filename"],
+        background=BackgroundTask(cleanup_export_job, job_id),
     )
 
 

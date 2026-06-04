@@ -102,6 +102,48 @@
   margin-top: 3px;
 }
 
+.exportProgress {
+  border: 1px solid #dfe4de;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  background: #f8faf7;
+}
+
+.exportProgressHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #394740;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.exportProgressHeader strong {
+  color: #1d6b4f;
+}
+
+.exportProgressTrack {
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: #dfe8e2;
+}
+
+.exportProgressTrack div {
+  height: 100%;
+  border-radius: inherit;
+  background: #1d6b4f;
+  transition: width 180ms ease;
+}
+
+.exportProgress small {
+  color: #66736c;
+  font-weight: 650;
+}
+
 .importModal {
   width: min(560px, 100%);
 }
