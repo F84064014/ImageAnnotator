@@ -12,7 +12,7 @@ from fastapi.responses import (
 )
 from starlette.background import BackgroundTask
 from app.schemas import (
-    AnnotationUpdate, ProjectCreate, ProjectExportRequest, ProjectSettingsUpdate
+    AnnotationUpdate, ImageDeleteRequest, ProjectCreate, ProjectExportRequest, ProjectSettingsUpdate
 )
 from app.utils import now_iso
 from app.services.project_service import (
@@ -28,7 +28,7 @@ from app.services.project_service import (
     has_selected_attribute, validate_attribute_value,
     project_file_from_meta,
     normalize_mask_labels, find_mask_label, mask_path_for_image,
-    import_data_directory
+    import_data_directory, delete_project_image
 )
 from app.services.export_service import (
     build_mask_status, cleanup_export, cleanup_export_job, create_projects_export,
@@ -320,6 +320,11 @@ def mark_image_annotated(project_id: str, image_id: str) -> dict[str, Any]:
         project["updated_at"] = now_iso()
         save_project(project, meta)
     return image
+
+
+@router.delete("/projects/{project_id}/images/{image_id}")
+def delete_image(project_id: str, image_id: str, payload: ImageDeleteRequest) -> dict[str, Any]:
+    return delete_project_image(project_id, image_id, payload.delete_file)
 
 
 @router.get("/projects/{project_id}/export")

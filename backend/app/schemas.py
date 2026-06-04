@@ -29,6 +29,10 @@ class ProjectExportRequest(BaseModel):
     project_ids: list[str] = Field(min_length=1)
 
 
+class ImageDeleteRequest(BaseModel):
+    delete_file: bool = False
+
+
 class ModelConfig(BaseModel):
     model_path: str
     input_size: tuple[int, int]

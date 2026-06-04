@@ -334,6 +334,28 @@ def find_project(project_id: str) -> tuple[list[dict[str, Any]], dict[str, Any],
         raise HTTPException(status_code=404, detail="Project not found")
     return meta, meta_item, load_project(meta_item)
 
+def delete_project_image(project_id: str, image_id: str, delete_file: bool) -> dict[str, Any]:
+    meta, _, project = find_project(project_id)
+    image = next((item for item in project["images"] if item["id"] == image_id), None)
+    if image is None:
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    if delete_file:
+        image_path = Path(image["path"]).resolve()
+        try:
+            image_path.relative_to(IMAGE_ROOT)
+        except ValueError as exc:
+            raise HTTPException(status_code=403, detail="Image path is outside mounted image root") from exc
+        if image_path.exists():
+            if not image_path.is_file():
+                raise HTTPException(status_code=400, detail="Image path is not a file")
+            image_path.unlink()
+
+    project["images"] = [item for item in project["images"] if item["id"] != image_id]
+    project["updated_at"] = now_iso()
+    save_project(project, meta)
+    return project
+
 def prepare_imported_project(raw_project: Any, meta: list[dict[str, Any]]) -> dict[str, Any]:
     if not isinstance(raw_project, dict):
         raise HTTPException(status_code=400, detail="Project JSON must be an object")

@@ -31,6 +31,9 @@ export default function Annotator({ projectId, onBack }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [settingsError, setSettingsError] = useState('');
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
   const [settingsDirectory, setSettingsDirectory] = useState('');
   const [settingsAttributes, setSettingsAttributes] = useState([]);
   const [settingsMasks, setSettingsMasks] = useState([]);
@@ -570,6 +573,27 @@ export default function Annotator({ projectId, onBack }) {
     }
   }
 
+  async function deleteCurrentImage(deleteFile) {
+    if (!project || !image) return;
+    setDeleteBusy(true);
+    setDeleteError('');
+    try {
+      const updatedProject = await api(`/projects/${project.id}/images/${image.id}`, {
+        method: 'DELETE',
+        body: JSON.stringify({ delete_file: deleteFile }),
+      });
+      setProject(updatedProject);
+      setSampleBox(null);
+      setSampleResult(null);
+      setDeleteDialogOpen(false);
+      setIndex((current) => Math.min(current, Math.max(updatedProject.images.length - 1, 0)));
+    } catch (err) {
+      setDeleteError(err.message);
+    } finally {
+      setDeleteBusy(false);
+    }
+  }
+
   useEffect(() => {
     function onKeyDown(event) {
       if (event.target.matches('textarea, select, [contenteditable="true"]')) return;
@@ -1015,6 +1039,16 @@ export default function Annotator({ projectId, onBack }) {
                 <button className="secondary" onClick={() => setDisplayResized((current) => !current)}>
                   <Minimize2 size={18} />{displayResized ? 'Original' : 'Resize'}
                 </button>
+                <button
+                  className="secondary dangerAction"
+                  onClick={() => {
+                    setDeleteError('');
+                    setDeleteDialogOpen(true);
+                  }}
+                  disabled={!image}
+                >
+                  <Trash2 size={18} />Delete
+                </button>
                 <button className="secondary" onClick={goNext} disabled={index === filteredImages.length - 1}>Next<ChevronRight size={18} /></button>
               </div>
               {sampleResult?.error && <div className="sampleResult sampleError">{sampleResult.error}</div>}
@@ -1125,6 +1159,26 @@ export default function Annotator({ projectId, onBack }) {
           )}
         </div>
       </section>
+      {deleteDialogOpen && image && (
+        <div className="modalBackdrop" onMouseDown={() => !deleteBusy && setDeleteDialogOpen(false)}>
+          <div className="modal deleteImageModal" onMouseDown={(event) => event.stopPropagation()}>
+            <h2>Delete image</h2>
+            <p>{image.path}</p>
+            <div className="deleteImageOptions">
+              <button className="secondary" onClick={() => deleteCurrentImage(false)} disabled={deleteBusy}>
+                Remove from meta
+              </button>
+              <button className="primary dangerPrimary" onClick={() => deleteCurrentImage(true)} disabled={deleteBusy}>
+                Delete original too
+              </button>
+            </div>
+            {deleteError && <div className="alert">{deleteError}</div>}
+            <div className="actions">
+              <button className="secondary" onClick={() => setDeleteDialogOpen(false)} disabled={deleteBusy}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
