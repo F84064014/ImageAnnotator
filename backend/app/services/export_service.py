@@ -139,9 +139,9 @@ def create_projects_export(
                     if not mask_path.exists():
                         continue
                     if len(mask_labels) == 1:
-                        mask_archive_name = f"masks/{export_basename}.jpg"
+                        mask_archive_name = f"masks/{export_basename}.png"
                     else:
-                        mask_archive_name = f"masks/{export_basename}_{safe_project_stem(mask_label['name'])}.jpg"
+                        mask_archive_name = f"masks/{export_basename}_{safe_project_stem(mask_label['name'])}.png"
                     write_export_mask(zip_file, mask_path, mask_archive_name)
                 if progress_callback:
                     progress_callback(index + 1, len(export_rows))
